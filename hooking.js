@@ -1,4 +1,4 @@
-// HOOKING
+// HOOKING - MCSettingsEvents / MCProfileEvents Scanner
 
 const APP_NAME = "HOOKING"
 const CREDIT = "SANTOS e r3"
@@ -16,32 +16,26 @@ function isMCFile(path) {
   let lower = path.toLowerCase()
   return (
     lower.includes("mcsettingsevents") ||
-    lower.includes("mcprofileevents") ||
-    lower.includes("mcsettings") ||
-    lower.includes("mcprofile")
+    lower.includes("mcprofileevents")
   )
 }
 
 function getFileType(path) {
   let lower = path.toLowerCase()
-  if (lower.includes("mcsettingsevents") || lower.includes("mcsettings")) return "MCSettings"
-  if (lower.includes("mcprofileevents") || lower.includes("mcprofile")) return "MCProfile"
+  if (lower.includes("mcsettingsevents")) return "MCSettings"
+  if (lower.includes("mcprofileevents")) return "MCProfile"
   return "MC"
 }
 
 function walkDirectory(fm, dir, files = []) {
-  let items = fm.listContents(dir)
-
-  for (let item of items) {
+  for (let item of fm.listContents(dir)) {
     let path = fm.joinPath(dir, item)
-
     if (fm.isDirectory(path)) {
       walkDirectory(fm, path, files)
     } else if (isMCFile(path)) {
       files.push(path)
     }
   }
-
   return files
 }
 
@@ -67,50 +61,98 @@ function cleanCode(code) {
     .trim()
 }
 
-function uniqueEvents(events) {
-  let map = {}
+function isNoise(code) {
+  let lower = code.toLowerCase()
 
-  for (let ev of events) {
-    let key = `${ev.source}|${ev.action}|${ev.code}|${ev.file}`
-    if (!map[key]) map[key] = ev
-  }
+  let blocked = [
+    "apple.com",
+    "doctype",
+    "plist",
+    "version",
+    "encoding",
+    "timestamp",
+    "operation",
+    "process",
+    "dictionary",
+    "string",
+    "integer",
+    "array",
+    "true",
+    "false",
+    "systemsettings",
+    "restrictions",
+    "clientrestrictions",
+    "systemclientrestrictions",
+    "effective"
+  ]
 
-  return Object.values(map)
+  return blocked.some(x => lower.includes(x))
+}
+
+function classifyCode(code) {
+  let lower = code.toLowerCase()
+
+  if (/^[a-f0-9]{64,128}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return "Hash + UUID"
+  if (/^[a-f0-9]{64,128}$/i.test(code)) return "Hash/Certificado"
+  if (/^(com|xyz|net|org)\.[a-zA-Z0-9._~\-]{4,240}$/i.test(code)) return "Perfil"
+  if (lower.includes("khoindvn") || lower.includes("khoivdon")) return "Perfil DNS"
+  return "Código"
+}
+
+function isWantedCode(code) {
+  let lower = code.toLowerCase()
+  if (!code || code.length < 12) return false
+  if (isNoise(code)) return false
+
+  if (/^[a-f0-9]{64,128}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return true
+  if (/^[a-f0-9]{64,128}$/i.test(code)) return true
+  if (/^(com|xyz|net|org)\.[a-zA-Z0-9._~\-]{4,240}$/i.test(code)) return true
+
+  if (lower.includes("khoindvn")) return true
+  if (lower.includes("khoivdon")) return true
+  if (lower.includes("apple-dns")) return true
+  if (lower.includes("fatality")) return true
+  if (lower.includes("freefire")) return true
+  if (lower.includes("aimbot")) return true
+  if (lower.includes("vpn")) return true
+  if (lower.includes("dns")) return true
+
+  return false
 }
 
 function findOperations(text) {
-  let operations = []
-  let operationRegex = /(install|installed|remove|removed|removal)/gi
-  let op
+  let ops = []
+  let regex = /(install|installed|remove|removed|removal)/gi
+  let m
 
-  while ((op = operationRegex.exec(text)) !== null) {
-    let raw = op[1].toLowerCase()
-    operations.push({
+  while ((m = regex.exec(text)) !== null) {
+    let raw = m[1].toLowerCase()
+    ops.push({
       type: raw.includes("install") ? "Instalação" : "Remoção",
-      index: op.index
+      index: m.index
     })
   }
 
-  return operations
+  return ops
 }
 
-function findNearestOperation(operations, index, maxDistance) {
-  let nearestOp = null
-  let nearestDistance = Infinity
+function nearestOperation(ops, index, distanceLimit) {
+  let best = null
+  let bestDistance = Infinity
 
-  for (let o of operations) {
-    let distance = Math.abs(o.index - index)
-    if (distance < nearestDistance && distance <= maxDistance) {
-      nearestDistance = distance
-      nearestOp = o
+  for (let op of ops) {
+    let d = Math.abs(op.index - index)
+    if (d < bestDistance && d <= distanceLimit) {
+      best = op
+      bestDistance = d
     }
   }
 
-  return nearestOp
+  return best
 }
 
-function extractDateNear(text, index) {
-  let block = text.slice(Math.max(0, index - 3000), Math.min(text.length, index + 3000))
+function dateNear(text, index) {
+  let block = text.slice(Math.max(0, index - 3500), Math.min(text.length, index + 3500))
 
   let patterns = [
     /\d{2}\/\d{2}\/\d{4}[, ]+\d{2}:\d{2}:\d{2}/,
@@ -127,77 +169,28 @@ function extractDateNear(text, index) {
   return "Data/hora não encontrada"
 }
 
-function classifyCode(code) {
-  let lower = code.toLowerCase()
+function removeSubMatches(codes) {
+  let sorted = codes.slice().sort((a, b) => b.code.length - a.code.length)
+  let final = []
 
-  if (/^[a-f0-9]{64,128}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return "Hash + UUID"
-  if (/^[a-f0-9]{64,128}$/i.test(code)) return "Hash/Certificado"
-  if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return "UUID"
-  if (lower.startsWith("com.")) return "Bundle/Profile"
-  if (lower.startsWith("xyz.")) return "Profile XYZ"
-  if (lower.startsWith("net.")) return "Profile NET"
-  if (lower.startsWith("org.")) return "Profile ORG"
-  if (lower.includes("khoindvn") || lower.includes("khoivdon")) return "Perfil DNS/Khoindvn"
+  for (let item of sorted) {
+    let existsInsideBigger = final.some(big => {
+      return big.code !== item.code && big.code.includes(item.code)
+    })
 
-  return "Código/Perfil"
+    if (!existsInsideBigger) final.push(item)
+  }
+
+  return final
 }
 
-function isSystemNoise(code) {
-  let lower = code.toLowerCase()
-
-  let blocked = [
-    "apple.com",
-    "doctype",
-    "plist",
-    "version",
-    "encoding",
-    "timestamp",
-    "operation",
-    "process",
-    "dictionary",
-    "array",
-    "string",
-    "integer",
-    "true",
-    "false"
-  ]
-
-  if (blocked.some(b => lower.includes(b))) return true
-  if (code.length < 8) return true
-
-  return false
-}
-
-function isInterestingCode(code) {
-  let lower = code.toLowerCase()
-
-  if (isSystemNoise(code)) return false
-
-  if (/^[a-f0-9]{64,128}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return true
-  if (/^[a-f0-9]{64,128}$/i.test(code)) return true
-  if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return true
-  if (/^(com|xyz|net|org)\.[a-zA-Z0-9._~\-]{4,240}$/i.test(code)) return true
-
-  if (lower.includes("khoindvn")) return true
-  if (lower.includes("khoivdon")) return true
-  if (lower.includes("apple-dns")) return true
-  if (lower.includes("fatality")) return true
-  if (lower.includes("freefire")) return true
-  if (lower.includes("aimbot")) return true
-  if (lower.includes("vpn")) return true
-  if (lower.includes("dns")) return true
-
-  return false
-}
-
-function extractCodesFromText(text) {
-  let codes = []
+function extractCodes(text) {
+  let found = []
 
   let regexes = [
     /([a-f0-9]{64,128}-[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/gi,
-    /([a-f0-9]{64,128})/gi,
-    /([A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/gi,
     /((?:com|xyz|net|org)\.[a-zA-Z0-9._~\-]{4,240})/g,
+    /([a-f0-9]{64,128})/gi,
     /([a-zA-Z0-9._~\-]*khoindvn[a-zA-Z0-9._~\-]*)/gi,
     /([a-zA-Z0-9._~\-]*khoivdon[a-zA-Z0-9._~\-]*)/gi
   ]
@@ -206,43 +199,53 @@ function extractCodesFromText(text) {
     let m
     while ((m = regex.exec(text)) !== null) {
       let code = cleanCode(m[1])
-      if (!code) continue
-      if (!isInterestingCode(code)) continue
+      if (!isWantedCode(code)) continue
 
-      codes.push({
+      found.push({
         code,
         index: m.index,
-        type: classifyCode(code)
+        codeType: classifyCode(code)
       })
     }
   }
 
-  return codes
+  return removeSubMatches(found)
 }
 
-function extractProfileCodes(content, file) {
-  let events = []
+function uniqueEvents(events) {
+  let map = {}
+
+  for (let ev of events) {
+    let key = `${ev.source}|${ev.action}|${ev.code}`
+    if (!map[key]) map[key] = ev
+  }
+
+  return Object.values(map)
+}
+
+function extractEvents(content, file) {
   let source = getFileType(file)
   let text = normalizeRawText(content)
-  let operations = findOperations(text)
-  let codes = extractCodesFromText(text)
+  let ops = findOperations(text)
+  let codes = extractCodes(text)
+  let events = []
 
   for (let c of codes) {
-    let nearestOp = findNearestOperation(operations, c.index, source === "MCSettings" ? 999999 : 6000)
+    let limit = source === "MCSettings" ? 999999 : 7000
+    let op = nearestOperation(ops, c.index, limit)
 
-    let action = "Evento MCSettings"
-    if (nearestOp) action = nearestOp.type
+    if (source === "MCProfile" && !op) continue
 
-    if (source === "MCProfile" && !nearestOp) continue
+    let action = op ? op.type : "Detectado"
+    let date = op ? dateNear(text, c.index) : "Sem install/remove próximo"
 
     events.push({
       source,
       action,
       code: c.code,
-      codeType: c.type,
-      date: nearestOp ? extractDateNear(text, c.index) : "Sem install/remove próximo",
-      file,
-      position: c.index
+      codeType: c.codeType,
+      date,
+      file
     })
   }
 
@@ -252,6 +255,7 @@ function extractProfileCodes(content, file) {
 function generateHtml(data) {
   let installed = data.events.filter(e => e.action === "Instalação")
   let removed = data.events.filter(e => e.action === "Remoção")
+  let detected = data.events.filter(e => e.action === "Detectado")
   let mcSettings = data.events.filter(e => e.source === "MCSettings")
   let mcProfile = data.events.filter(e => e.source === "MCProfile")
 
@@ -285,19 +289,27 @@ body {
   font-family: Menlo, monospace;
   padding:22px;
 }
+.header {
+  text-align:center;
+  margin-bottom:28px;
+}
 .main-name {
   color:#ffffff;
-  font-size:42px;
+  font-size:44px;
   font-weight:900;
-  letter-spacing:8px;
+  letter-spacing:10px;
   text-shadow:0 0 12px #fff, 0 0 22px #777;
-  margin-bottom:4px;
 }
 .credits {
-  color:#777;
-  font-size:12px;
+  margin-top:10px;
+  color:#888;
+  font-size:13px;
   letter-spacing:3px;
-  margin-bottom:20px;
+  line-height:1.7;
+}
+.discord {
+  color:#ffffff;
+  text-shadow:0 0 8px #fff;
 }
 .section {
   border:1px solid #222;
@@ -379,15 +391,17 @@ body {
 </head>
 <body>
 
-<div class="main-name">${APP_NAME}</div>
-<div class="credits">CRÉDITOS: ${CREDIT}<br>${DISCORD}</div>
+<div class="header">
+  <div class="main-name">${APP_NAME}</div>
+  <div class="credits">CRÉDITOS: ${CREDIT}<br><span class="discord">${DISCORD}</span></div>
+</div>
 
 <div class="section">
   <div class="title">◆ ARQUIVOS ANALISADOS</div>
-  <div class="row"><span class="label">MCSettings / MCProfile lidos</span><span class="value">${data.filesRead}</span></div>
-  <div class="row"><span class="label">Eventos encontrados</span><span class="value">${data.events.length}</span></div>
-  <div class="row"><span class="label">MCSettings detectados</span><span class="value">${mcSettings.length}</span></div>
-  <div class="row"><span class="label">MCProfile detectados</span><span class="value">${mcProfile.length}</span></div>
+  <div class="row"><span class="label">Arquivos lidos</span><span class="value">${data.filesRead}</span></div>
+  <div class="row"><span class="label">Eventos únicos</span><span class="value">${data.events.length}</span></div>
+  <div class="row"><span class="label">MCSettings</span><span class="value">${mcSettings.length}</span></div>
+  <div class="row"><span class="label">MCProfile</span><span class="value">${mcProfile.length}</span></div>
 </div>
 
 <div class="section">
@@ -411,8 +425,8 @@ body {
 </div>
 
 <div class="section">
-  <div class="title">◆ TODOS OS EVENTOS (${data.events.length})</div>
-  ${data.events.length ? data.events.map(card).join("") : "<p>Nenhum código encontrado.</p>"}
+  <div class="title">◆ DETECTADOS SEM AÇÃO (${detected.length})</div>
+  ${detected.length ? detected.map(card).join("") : "<p>Nenhum detectado sem ação.</p>"}
 </div>
 
 </body>
@@ -440,7 +454,7 @@ async function main() {
     if (!content) continue
 
     filesRead++
-    allEvents.push(...extractProfileCodes(content, file))
+    allEvents.push(...extractEvents(content, file))
   }
 
   let cleanEvents = uniqueEvents(allEvents)
@@ -466,7 +480,7 @@ async function main() {
 
   await alertMsg(
     "Hooking finalizado",
-    `Arquivos MC lidos: ${filesRead}\nEventos encontrados: ${cleanEvents.length}`
+    `Arquivos lidos: ${filesRead}\nEventos únicos: ${cleanEvents.length}`
   )
 
   QuickLook.present(path)
