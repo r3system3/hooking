@@ -1,51 +1,19 @@
-// HOOKING - Sysdiagnose Scanner para Scriptable
+// HOOKING - Sysdiagnose Scanner iOS
 
 const RULES = [
-  {
-    name: "Frida",
-    patterns: ["frida", "frida-server", "re.frida.server"],
-    risk: 35
-  },
-  {
-    name: "Dopamine",
-    patterns: ["dopamine", "/var/jb", "ellekit"],
-    risk: 40
-  },
-  {
-    name: "MobileSubstrate",
-    patterns: ["mobilesubstrate", "substrate", "cydiasubstrate"],
-    risk: 35
-  },
-  {
-    name: "Substitute",
-    patterns: ["substitute", "libsubstitute"],
-    risk: 30
-  },
-  {
-    name: "Libhooker",
-    patterns: ["libhooker"],
-    risk: 30
-  },
-  {
-    name: "Cydia",
-    patterns: ["cydia", "/applications/cydia.app"],
-    risk: 35
-  },
-  {
-    name: "Sileo",
-    patterns: ["sileo", "/applications/sileo.app"],
-    risk: 35
-  },
-  {
-    name: "TrollStore",
-    patterns: ["trollstore", "com.opa334.trollstore"],
-    risk: 30
-  },
-  {
-    name: "Debug / LLDB",
-    patterns: ["ptrace", "debugserver", "lldb", "gdb"],
-    risk: 20
-  }
+  { name: "Frida", patterns: ["frida", "frida-server", "re.frida.server"], risk: 35 },
+  { name: "Dopamine", patterns: ["dopamine", "/var/jb", "ellekit"], risk: 40 },
+  { name: "MobileSubstrate", patterns: ["mobilesubstrate", "substrate", "cydiasubstrate"], risk: 35 },
+  { name: "Substitute", patterns: ["substitute", "libsubstitute"], risk: 30 },
+  { name: "Libhooker", patterns: ["libhooker"], risk: 30 },
+  { name: "Cydia", patterns: ["cydia", "/applications/cydia.app"], risk: 35 },
+  { name: "Sileo", patterns: ["sileo", "/applications/sileo.app"], risk: 35 },
+  { name: "Zebra", patterns: ["zebra", "/applications/zebra.app"], risk: 25 },
+  { name: "TrollStore", patterns: ["trollstore", "com.opa334.trollstore"], risk: 30 },
+  { name: "Debug / LLDB", patterns: ["ptrace", "debugserver", "lldb", "gdb"], risk: 20 },
+  { name: "MCSettings", patterns: ["mcsettings"], risk: 10 },
+  { name: "MCProfile", patterns: ["mcprofile"], risk: 10 },
+  { name: "MobileConfig", patterns: ["mobileconfig", "PayloadIdentifier", "PayloadUUID"], risk: 10 }
 ]
 
 const TEXT_EXTENSIONS = [
@@ -82,10 +50,8 @@ function walkDirectory(fm, dir, files = []) {
 
     if (fm.isDirectory(path)) {
       walkDirectory(fm, path, files)
-    } else {
-      if (isTextFile(path)) {
-        files.push(path)
-      }
+    } else if (isTextFile(path)) {
+      files.push(path)
     }
   }
 
@@ -128,7 +94,8 @@ function extractEvents(content) {
     "mcsettings",
     "configuration profile",
     "PayloadIdentifier",
-    "PayloadUUID"
+    "PayloadUUID",
+    "PayloadDisplayName"
   ]
 
   for (let line of lines) {
@@ -186,8 +153,29 @@ function uniqueProfiles(profiles) {
   return Object.values(map)
 }
 
+function uniqueFindings(findings) {
+  let map = {}
+
+  for (let f of findings) {
+    let key = f.name
+    if (!map[key]) {
+      map[key] = {
+        name: f.name,
+        patterns: [],
+        risk: f.risk
+      }
+    }
+
+    map[key].patterns.push(...f.patterns)
+    map[key].patterns = [...new Set(map[key].patterns)]
+  }
+
+  return Object.values(map)
+}
+
 function generateReport(data) {
-  let score = Math.min(100, data.findings.reduce((s, f) => s + f.risk, 0))
+  let cleanFindings = uniqueFindings(data.findings)
+  let score = Math.min(100, cleanFindings.reduce((s, f) => s + f.risk, 0))
   let status = score >= 70 ? "ALTO RISCO" : score >= 35 ? "RISCO MÉDIO" : "BAIXO RISCO"
 
   let report = ""
@@ -213,29 +201,29 @@ function generateReport(data) {
     }
   }
 
-  report += "INSTALAÇÕES / REMOÇÕES / EVENTOS MCSETTINGS-MCPROFILE\n"
-  report += "------------------------------------------------------\n"
+  report += "INSTALAÇÕES / REMOÇÕES / EVENTOS\n"
+  report += "--------------------------------\n"
 
   if (!data.events.length) {
     report += "Nenhum evento encontrado.\n\n"
   } else {
-    for (let ev of data.events.slice(0, 300)) {
+    for (let ev of data.events.slice(0, 500)) {
       report += `Data/Hora: ${ev.date}\n`
       report += `Linha: ${ev.line}\n\n`
     }
 
-    if (data.events.length > 300) {
-      report += `...mais ${data.events.length - 300} eventos ocultados para evitar relatório gigante.\n\n`
+    if (data.events.length > 500) {
+      report += `...mais ${data.events.length - 500} eventos ocultados.\n\n`
     }
   }
 
   report += "JAILBREAK / HOOK / FRIDA / DOPAMINE\n"
   report += "------------------------------------\n"
 
-  if (!data.findings.length) {
+  if (!cleanFindings.length) {
     report += "Nenhum indicador encontrado.\n\n"
   } else {
-    for (let f of data.findings) {
+    for (let f of cleanFindings) {
       report += `Indicador: ${f.name}\n`
       report += `Padrões encontrados: ${f.patterns.join(", ")}\n`
       report += `Risco: ${f.risk}\n\n`
@@ -248,7 +236,7 @@ function generateReport(data) {
   if (!data.suspiciousFiles.length) {
     report += "Nenhum arquivo suspeito listado.\n"
   } else {
-    for (let sf of data.suspiciousFiles.slice(0, 200)) {
+    for (let sf of data.suspiciousFiles.slice(0, 300)) {
       report += `Arquivo: ${sf.file}\n`
       report += `Achados: ${sf.matches.join(", ")}\n\n`
     }
@@ -264,7 +252,7 @@ async function getInputPath() {
 
   await alertMsg(
     "Hooking",
-    "Abra a pasta/arquivo extraído da sysdiagnose pelo app Arquivos e escolha Compartilhar > Scriptable."
+    "Selecione a pasta ou arquivo extraído da sysdiagnose."
   )
 
   let picked = await DocumentPicker.openFile()
@@ -329,7 +317,7 @@ async function main() {
 
   await alertMsg(
     "Hooking finalizado",
-    `Sysdiagnose analisada.\n\nArquivos lidos: ${filesRead}\nRelatório salvo em Documentos do Scriptable.`
+    `Sysdiagnose analisada.\n\nArquivos lidos: ${filesRead}\nRelatório salvo no Scriptable.`
   )
 
   QuickLook.present(outPath)
