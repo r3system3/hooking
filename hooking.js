@@ -22,20 +22,22 @@ function isMCFile(path) {
 
 function getFileType(path) {
   let lower = path.toLowerCase()
-  if (lower.includes("mcsettingsevents")) return "MCSettings"
-  if (lower.includes("mcprofileevents")) return "MCProfile"
+  if (lower.includes("mcsettingsevents")) return "MCSettingsEvents"
+  if (lower.includes("mcprofileevents")) return "MCProfileEvents"
   return "MC"
 }
 
 function walkDirectory(fm, dir, files = []) {
   for (let item of fm.listContents(dir)) {
     let path = fm.joinPath(dir, item)
+
     if (fm.isDirectory(path)) {
       walkDirectory(fm, path, files)
     } else if (isMCFile(path)) {
       files.push(path)
     }
   }
+
   return files
 }
 
@@ -101,6 +103,7 @@ function classifyCode(code) {
 
 function isWantedCode(code) {
   let lower = code.toLowerCase()
+
   if (!code || code.length < 12) return false
   if (isNoise(code)) return false
 
@@ -142,6 +145,7 @@ function nearestOperation(ops, index, distanceLimit) {
 
   for (let op of ops) {
     let d = Math.abs(op.index - index)
+
     if (d < bestDistance && d <= distanceLimit) {
       best = op
       bestDistance = d
@@ -152,13 +156,14 @@ function nearestOperation(ops, index, distanceLimit) {
 }
 
 function dateNear(text, index) {
-  let block = text.slice(Math.max(0, index - 3500), Math.min(text.length, index + 3500))
+  let block = text.slice(Math.max(0, index - 5000), Math.min(text.length, index + 5000))
 
   let patterns = [
     /\d{2}\/\d{2}\/\d{4}[, ]+\d{2}:\d{2}:\d{2}/,
     /\d{2}-\d{2}-\d{4}[, ]+\d{2}:\d{2}:\d{2}/,
     /\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/,
-    /\d{2}\/\d{2}\/\d{2}[, ]+\d{2}:\d{2}:\d{2}/
+    /\d{2}\/\d{2}\/\d{2}[, ]+\d{2}:\d{2}:\d{2}/,
+    /\d{2}:\d{2}:\d{2}/
   ]
 
   for (let p of patterns) {
@@ -166,7 +171,7 @@ function dateNear(text, index) {
     if (m) return m[0]
   }
 
-  return "Data/hora não encontrada"
+  return "Horário não encontrado"
 }
 
 function removeSubMatches(codes) {
@@ -197,6 +202,7 @@ function extractCodes(text) {
 
   for (let regex of regexes) {
     let m
+
     while ((m = regex.exec(text)) !== null) {
       let code = cleanCode(m[1])
       if (!isWantedCode(code)) continue
@@ -231,10 +237,10 @@ function extractEvents(content, file) {
   let events = []
 
   for (let c of codes) {
-    let limit = source === "MCSettings" ? 999999 : 7000
+    let limit = source === "MCSettingsEvents" ? 999999 : 7000
     let op = nearestOperation(ops, c.index, limit)
 
-    if (source === "MCProfile" && !op) continue
+    if (source === "MCProfileEvents" && !op) continue
 
     let action = op ? op.type : "Detectado"
     let date = op ? dateNear(text, c.index) : "Sem install/remove próximo"
@@ -256,8 +262,8 @@ function generateHtml(data) {
   let installed = data.events.filter(e => e.action === "Instalação")
   let removed = data.events.filter(e => e.action === "Remoção")
   let detected = data.events.filter(e => e.action === "Detectado")
-  let mcSettings = data.events.filter(e => e.source === "MCSettings")
-  let mcProfile = data.events.filter(e => e.source === "MCProfile")
+  let mcSettingsEvents = data.events.filter(e => e.source === "MCSettingsEvents")
+  let mcProfileEvents = data.events.filter(e => e.source === "MCProfileEvents")
 
   function card(ev) {
     let cls = ev.action === "Remoção" ? "remove" : ev.action === "Instalação" ? "install" : "event"
@@ -291,25 +297,31 @@ body {
 }
 .header {
   text-align:center;
-  margin-bottom:28px;
+  margin-top:24px;
+  margin-bottom:42px;
+  padding:22px 0 14px 0;
 }
 .main-name {
   color:#ffffff;
-  font-size:44px;
+  font-size:76px;
   font-weight:900;
-  letter-spacing:10px;
-  text-shadow:0 0 12px #fff, 0 0 22px #777;
+  letter-spacing:14px;
+  text-shadow:0 0 14px #fff, 0 0 32px #fff, 0 0 55px #777;
+  line-height:1;
 }
 .credits {
-  margin-top:10px;
-  color:#888;
-  font-size:13px;
-  letter-spacing:3px;
-  line-height:1.7;
+  margin-top:20px;
+  color:#bbbbbb;
+  font-size:24px;
+  letter-spacing:4px;
+  line-height:1.9;
+  text-shadow:0 0 8px #555;
 }
 .discord {
   color:#ffffff;
-  text-shadow:0 0 8px #fff;
+  font-size:26px;
+  font-weight:700;
+  text-shadow:0 0 10px #fff, 0 0 18px #777;
 }
 .section {
   border:1px solid #222;
@@ -400,8 +412,8 @@ body {
   <div class="title">◆ ARQUIVOS ANALISADOS</div>
   <div class="row"><span class="label">Arquivos lidos</span><span class="value">${data.filesRead}</span></div>
   <div class="row"><span class="label">Eventos únicos</span><span class="value">${data.events.length}</span></div>
-  <div class="row"><span class="label">MCSettings</span><span class="value">${mcSettings.length}</span></div>
-  <div class="row"><span class="label">MCProfile</span><span class="value">${mcProfile.length}</span></div>
+  <div class="row"><span class="label">MCSettingsEvents</span><span class="value">${mcSettingsEvents.length}</span></div>
+  <div class="row"><span class="label">MCProfileEvents</span><span class="value">${mcProfileEvents.length}</span></div>
 </div>
 
 <div class="section">
@@ -415,13 +427,13 @@ body {
 </div>
 
 <div class="section">
-  <div class="title">◆ MCSETTINGS (${mcSettings.length})</div>
-  ${mcSettings.length ? mcSettings.map(card).join("") : "<p>Nenhum hash/perfil encontrado na MCSettings.</p>"}
+  <div class="title">◆ MCSETTINGSEVENTS (${mcSettingsEvents.length})</div>
+  ${mcSettingsEvents.length ? mcSettingsEvents.map(card).join("") : "<p>Nenhum hash/perfil encontrado na MCSettingsEvents.</p>"}
 </div>
 
 <div class="section">
-  <div class="title">◆ MCPROFILE (${mcProfile.length})</div>
-  ${mcProfile.length ? mcProfile.map(card).join("") : "<p>Nenhum evento encontrado na MCProfile.</p>"}
+  <div class="title">◆ MCPROFILEEVENTS (${mcProfileEvents.length})</div>
+  ${mcProfileEvents.length ? mcProfileEvents.map(card).join("") : "<p>Nenhum evento encontrado na MCProfileEvents.</p>"}
 </div>
 
 <div class="section">
@@ -460,8 +472,8 @@ async function main() {
   let cleanEvents = uniqueEvents(allEvents)
 
   cleanEvents.sort((a, b) => {
-    if (a.source === "MCSettings" && b.source !== "MCSettings") return -1
-    if (a.source !== "MCSettings" && b.source === "MCSettings") return 1
+    if (a.source === "MCSettingsEvents" && b.source !== "MCSettingsEvents") return -1
+    if (a.source !== "MCSettingsEvents" && b.source === "MCSettingsEvents") return 1
     if (a.action === "Instalação" && b.action !== "Instalação") return -1
     if (a.action === "Remoção" && b.action !== "Remoção") return 1
     return a.code.localeCompare(b.code)
