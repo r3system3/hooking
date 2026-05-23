@@ -1,4 +1,4 @@
-// HOOKING - MCSettings / MCProfile Scanner
+// HOOKING - MCSettingsEvents / MCProfileEvents Scanner
 
 const APP_NAME = "HOOKING"
 const CREDIT = "SANTOS e r3"
@@ -14,13 +14,11 @@ async function alertMsg(title, message) {
 
 function isMCFile(path) {
   let lower = path.toLowerCase()
-
   return (
-    lower.includes("mcprofile") ||
+    lower.includes("mcsettingsevents") ||
+    lower.includes("mcprofileevents") ||
     lower.includes("mcsettings") ||
-    lower.includes("settingsevents") ||
-    lower.includes("managedsettings") ||
-    lower.includes("managedconfiguration")
+    lower.includes("mcprofile")
   )
 }
 
@@ -48,23 +46,23 @@ function readTextSafe(fm, path) {
   }
 }
 
-function cleanText(s) {
-  return String(s || "")
-    .replace(/\u0000/g, "")
-    .replace(/[^\x20-\x7EÀ-ÿ]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-}
+function uniqueEvents(events) {
+  let map = {}
 
-function normalizeCode(code) {
-  return cleanText(code)
-    .replace(/^[-_\s]+/, "")
-    .replace(/[-_\s]+$/, "")
+  for (let ev of events) {
+    let key = `${ev.action}|${ev.code}|${ev.file}`
+    if (!map[key]) map[key] = ev
+  }
+
+  return Object.values(map)
 }
 
 function extractProfileCodes(content, file) {
   let events = []
-  let text = cleanText(content)
+
+  let text = String(content || "")
+    .replace(/\u0000/g, "")
+    .replace(/[^\x20-\x7EÀ-ÿ]/g, " ")
 
   let operationRegex = /(install|remove)/gi
   let operations = []
@@ -78,19 +76,22 @@ function extractProfileCodes(content, file) {
   }
 
   let codeRegexes = [
-    /([a-f0-9]{40,96}-[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/g,
-    /([A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/g,
-    /([a-f0-9]{32,96})/g,
-    /((?:com\.)[a-zA-Z0-9._~\-]{4,180})/g,
-    /((?:xyz\.)[a-zA-Z0-9._~\-]{4,180})/g
+    /([a-f0-9]{40,128}-[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/gi,
+    /([a-f0-9]{64,128})/gi,
+    /([A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/gi,
+    /((?:com|xyz|net|org)\.[a-zA-Z0-9._~\-]{4,220})/g
   ]
 
   for (let regex of codeRegexes) {
     let m
 
     while ((m = regex.exec(text)) !== null) {
-      let code = normalizeCode(m[1])
-      if (!code || code.length < 8) continue
+      let code = String(m[1] || "").trim()
+
+      if (!code) continue
+      if (code.length < 8) continue
+      if (code.includes("apple.com/DTDs")) continue
+      if (code.toLowerCase().includes("plist")) continue
 
       let nearestOp = null
       let nearestDistance = Infinity
@@ -98,7 +99,7 @@ function extractProfileCodes(content, file) {
       for (let o of operations) {
         let distance = Math.abs(o.index - m.index)
 
-        if (distance < nearestDistance && distance < 2500) {
+        if (distance < nearestDistance && distance < 5000) {
           nearestDistance = distance
           nearestOp = o
         }
@@ -116,17 +117,6 @@ function extractProfileCodes(content, file) {
   }
 
   return uniqueEvents(events)
-}
-
-function uniqueEvents(events) {
-  let map = {}
-
-  for (let ev of events) {
-    let key = `${ev.action}|${ev.code}|${ev.file}`
-    if (!map[key]) map[key] = ev
-  }
-
-  return Object.values(map)
 }
 
 function generateHtml(data) {
@@ -232,7 +222,7 @@ body {
 
 <div class="section">
   <div class="title">◆ ARQUIVOS ANALISADOS</div>
-  <div class="row"><span class="label">MCSettings / MCProfile lidos</span><span class="value">${data.filesRead}</span></div>
+  <div class="row"><span class="label">MCSettingsEvents / MCProfileEvents lidos</span><span class="value">${data.filesRead}</span></div>
   <div class="row"><span class="label">Eventos encontrados</span><span class="value">${data.events.length}</span></div>
 </div>
 
@@ -300,7 +290,7 @@ async function main() {
 
   await alertMsg(
     "Hooking finalizado",
-    `MCSettings/MCProfile lidos: ${filesRead}\nEventos encontrados: ${cleanEvents.length}`
+    `Arquivos lidos: ${filesRead}\nEventos encontrados: ${cleanEvents.length}`
   )
 
   QuickLook.present(path)
