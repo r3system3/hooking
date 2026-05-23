@@ -1,56 +1,34 @@
-// HOOKING - Scanner MCSettingsEvents / MCProfile / Jailbreak
+// HOOKING - Scanner MCProfile / MCSettingsEvents
 
-const SUSPICIOUS_PROFILE_WORDS = [
-  "aimbot",
-  "freefire",
-  "hack",
-  "cheat",
-  "inject",
-  "injected",
-  "hook",
-  "frida",
-  "dopamine",
-  "ellekit",
-  "trollstore",
-  "cydia",
-  "sileo",
-  "substrate",
-  "substitute",
-  "libhooker",
-  "apple-dns",
-  "dns",
-  "vpn",
-  "proxy",
-  "warp",
-  "managed",
-  "configuration"
-]
-
-const JAILBREAK_WORDS = [
-  "frida",
-  "frida-server",
-  "re.frida.server",
-  "dopamine",
-  "ellekit",
-  "/var/jb",
-  "mobilesubstrate",
-  "substrate",
-  "cydiasubstrate",
-  "substitute",
-  "libsubstitute",
-  "libhooker",
-  "cydia",
-  "sileo",
-  "zebra",
-  "trollstore",
-  "debugserver",
-  "ptrace",
-  "lldb"
-]
+const APP_NAME = "HOOKING"
+const CREDIT = "SANTOS e r3"
+const DISCORD = "discord.gg/hooking"
 
 const TEXT_EXTENSIONS = [
   ".txt", ".log", ".ips", ".plist", ".mobileconfig",
   ".json", ".xml", ".trace", ".crash", ".analytics"
+]
+
+const PROFILE_SUSPICIOUS_WORDS = [
+  "aimbot", "cheat", "hack", "freefire", "inject", "injected",
+  "hook", "bypass", "mod", "apple-dns", "dns", "vpn", "proxy",
+  "warp", "managed", "configuration"
+]
+
+const JAILBREAK_STRONG_WORDS = [
+  "frida-server",
+  "re.frida.server",
+  "/var/jb/",
+  "/applications/cydia.app",
+  "/applications/sileo.app",
+  "/applications/zebra.app",
+  "mobilesubstrate.dylib",
+  "cydiasubstrate",
+  "libhooker.dylib",
+  "libsubstitute.dylib",
+  "ellekit.dylib",
+  "dopamine.app",
+  "trollstore.app"
 ]
 
 async function alertMsg(title, message) {
@@ -82,7 +60,7 @@ function walkDirectory(fm, dir, files = []) {
 
     if (fm.isDirectory(path)) {
       walkDirectory(fm, path, files)
-    } else if (isTextFile(path)) {
+    } else if (isTextFile(path) || path.toLowerCase().includes("mcsettings") || path.toLowerCase().includes("mcprofile")) {
       files.push(path)
     }
   }
@@ -90,105 +68,94 @@ function walkDirectory(fm, dir, files = []) {
   return files
 }
 
-function getAllMatches(content, regex) {
-  let out = []
-  let m
-  while ((m = regex.exec(content)) !== null) {
-    out.push(m[1])
-  }
-  return out
-}
-
-function normalizeCode(code) {
-  return String(code || "")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
+function cleanText(s) {
+  return String(s || "")
+    .replace(/\u0000/g, "")
+    .replace(/[^\x20-\x7EÀ-ÿ]/g, " ")
+    .replace(/\s+/g, " ")
     .trim()
 }
 
-function detectActionNear(content, index) {
-  let start = Math.max(0, index - 600)
-  let end = Math.min(content.length, index + 600)
-  let block = content.slice(start, end).toLowerCase()
+function normalizeCode(code) {
+  return cleanText(code)
+    .replace(/^[-_\s]+/, "")
+    .replace(/[-_\s]+$/, "")
+}
 
-  if (
-    block.includes("removal") ||
-    block.includes("removed") ||
-    block.includes("remove") ||
-    block.includes("remoção") ||
-    block.includes("remocao")
-  ) {
-    return "Remoção"
-  }
+function detectOperation(content, index) {
+  let block = content.slice(Math.max(0, index - 900), Math.min(content.length, index + 900)).toLowerCase()
 
-  if (
-    block.includes("install") ||
-    block.includes("installed") ||
-    block.includes("instalação") ||
-    block.includes("instalacao")
-  ) {
-    return "Instalação"
-  }
+  let removePos = Math.max(
+    block.lastIndexOf("remove"),
+    block.lastIndexOf("removed"),
+    block.lastIndexOf("removal"),
+    block.lastIndexOf("remoção"),
+    block.lastIndexOf("remocao")
+  )
+
+  let installPos = Math.max(
+    block.lastIndexOf("install"),
+    block.lastIndexOf("installed"),
+    block.lastIndexOf("instalação"),
+    block.lastIndexOf("instalacao")
+  )
+
+  if (removePos > installPos && removePos !== -1) return "Remoção"
+  if (installPos !== -1) return "Instalação"
 
   return "Evento"
 }
 
-function detectDateNear(content, index) {
-  let start = Math.max(0, index - 800)
-  let end = Math.min(content.length, index + 800)
-  let block = content.slice(start, end)
+function detectDate(content, index) {
+  let block = content.slice(Math.max(0, index - 1200), Math.min(content.length, index + 1200))
 
-  let patterns = [
-    /\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/,
-    /\d{2}\/\d{2}\/\d{4}[, ]+\d{2}:\d{2}:\d{2}/,
-    /\d{2}-\d{2}-\d{4}[, ]+\d{2}:\d{2}:\d{2}/,
-    /\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}/
-  ]
+  let found =
+    block.match(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/) ||
+    block.match(/\d{2}\/\d{2}\/\d{4}[, ]+\d{2}:\d{2}:\d{2}/) ||
+    block.match(/\d{2}-\d{2}-\d{4}[, ]+\d{2}:\d{2}:\d{2}/)
 
-  for (let r of patterns) {
-    let m = block.match(r)
-    if (m) return m[0]
-  }
-
-  return "Data não encontrada"
+  return found ? found[0] : "Timestamp interno"
 }
 
 function isSuspiciousProfile(code) {
   let lower = code.toLowerCase()
-  return SUSPICIOUS_PROFILE_WORDS.some(w => lower.includes(w.toLowerCase()))
+  return PROFILE_SUSPICIOUS_WORDS.some(w => lower.includes(w))
 }
 
-function extractMCSettingsProfiles(content, file) {
+function extractProfileEvents(content, file) {
   let events = []
+  let source = content
+
   let regexes = [
-    /<key>([^<]{8,200})<\/key>\s*<dict>/gi,
-    /<string>([^<]{8,200})<\/string>/gi,
-    /([a-f0-9]{32,80})/gi,
-    /((?:com\.)[a-zA-Z0-9._~\-]{5,120})/g
+    /([a-f0-9]{40,96}-[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/g,
+    /([A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}-[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/g,
+    /((?:com\.)[a-zA-Z0-9._~\-]{4,160})/g,
+    /([a-f0-9]{32,96})/g,
+    /<key>([^<]{8,220})<\/key>\s*<dict>/gi,
+    /<string>([^<]{8,220})<\/string>/gi
   ]
 
   for (let regex of regexes) {
     let m
-    while ((m = regex.exec(content)) !== null) {
+    while ((m = regex.exec(source)) !== null) {
       let code = normalizeCode(m[1])
 
       if (!code) continue
       if (code.length < 8) continue
-      if (code.includes("http")) continue
-      if (code.includes("plist")) continue
-      if (code.includes("DOCTYPE")) continue
+      if (code.toLowerCase().includes("doctype")) continue
+      if (code.toLowerCase().includes("plist")) continue
+      if (code.toLowerCase().includes("http")) continue
+      if (code.toLowerCase().includes("apple.com/dtd")) continue
 
-      let action = detectActionNear(content, m.index)
-      let date = detectDateNear(content, m.index)
-      let suspicious = isSuspiciousProfile(code)
+      let action = detectOperation(source, m.index)
+      let date = detectDate(source, m.index)
 
       events.push({
         action,
         code,
         date,
         file,
-        suspicious
+        suspicious: isSuspiciousProfile(code)
       })
     }
   }
@@ -198,25 +165,21 @@ function extractMCSettingsProfiles(content, file) {
 
 function uniqueEvents(events) {
   let map = {}
-
   for (let ev of events) {
-    let key = `${ev.action}|${ev.code}|${ev.date}`
-    map[key] = ev
+    let key = `${ev.action}|${ev.code}`
+    if (!map[key]) map[key] = ev
   }
-
   return Object.values(map)
 }
 
 function scanJailbreak(content, file) {
   let found = []
   let lower = content.toLowerCase()
+  let filename = file.toLowerCase()
 
-  for (let word of JAILBREAK_WORDS) {
-    if (lower.includes(word.toLowerCase())) {
-      found.push({
-        indicator: word,
-        file
-      })
+  for (let word of JAILBREAK_STRONG_WORDS) {
+    if (lower.includes(word.toLowerCase()) || filename.includes(word.toLowerCase())) {
+      found.push({ indicator: word, file })
     }
   }
 
@@ -270,7 +233,7 @@ function generateHtml(data) {
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Hooking Scanner</title>
+<title>${APP_NAME}</title>
 <style>
 body {
   background:#050505;
@@ -278,9 +241,19 @@ body {
   font-family: Menlo, monospace;
   padding:22px;
 }
-h1 {
-  letter-spacing:5px;
-  font-size:28px;
+.main-name {
+  color:#ffffff;
+  font-size:42px;
+  font-weight:900;
+  letter-spacing:8px;
+  text-shadow:0 0 12px #fff, 0 0 22px #777;
+  margin-bottom:4px;
+}
+.credits {
+  color:#777;
+  font-size:12px;
+  letter-spacing:3px;
+  margin-bottom:20px;
 }
 .section {
   border:1px solid #222;
@@ -346,16 +319,14 @@ h1 {
 .danger {
   color:#ff4f68;
   font-weight:bold;
-}
-.small {
-  color:#555;
-  font-size:12px;
+  word-break:break-all;
 }
 </style>
 </head>
 <body>
 
-<h1>ANALISANDO <span class="small">SCANNER</span></h1>
+<div class="main-name">${APP_NAME}</div>
+<div class="credits">CRÉDITOS: ${CREDIT}<br>${DISCORD}</div>
 
 <div class="section">
   <div class="title">◆ INFORMAÇÕES DO DISPOSITIVO</div>
@@ -371,7 +342,12 @@ h1 {
 </div>
 
 <div class="section">
-  <div class="title">◆ DETECÇÕES (${data.jailbreak.length})</div>
+  <div class="title">◆ PERFIS REMOVIDOS (${removed.length})</div>
+  ${removed.length ? removed.map(card).join("") : "<p>Nenhum perfil removido encontrado.</p>"}
+</div>
+
+<div class="section">
+  <div class="title">◆ DETECÇÕES JAILBREAK (${data.jailbreak.length})</div>
   ${data.jailbreak.length ? data.jailbreak.map(j => `
     <div class="card">
       <div>
@@ -380,21 +356,24 @@ h1 {
         <div class="file">${j.file.split("/").pop()}</div>
       </div>
     </div>
-  `).join("") : "<p>Nenhum indicador de jailbreak/hook encontrado.</p>"}
+  `).join("") : "<p>Nenhum indicador forte de jailbreak encontrado.</p>"}
 </div>
 
 <div class="section">
   <div class="title">◆ PERFIS ANORMAIS (${abnormal.length})</div>
   ${abnormal.length ? abnormal.map(e => `
     <div class="card">
-      <div class="danger">⚠ ${e.code}</div>
+      <div>
+        <div class="danger">⚠ ${e.code}</div>
+        <div class="file">${e.file.split("/").pop()}</div>
+      </div>
       <div class="date">${e.date}</div>
     </div>
   `).join("") : "<p>Nenhum perfil anormal encontrado.</p>"}
 </div>
 
 <div class="section">
-  <div class="title">◆ INSTALAÇÃO DE PERFIS</div>
+  <div class="title">◆ INSTALAÇÃO / REMOÇÃO DE PERFIS (${data.events.length})</div>
   ${data.events.length ? data.events.map(card).join("") : "<p>Nenhum evento encontrado.</p>"}
 </div>
 
@@ -411,7 +390,6 @@ async function getInputPath() {
 async function main() {
   let fm = FileManager.local()
   let input = await getInputPath()
-
   let files = fm.isDirectory(input) ? walkDirectory(fm, input) : [input]
 
   let allEvents = []
@@ -420,15 +398,25 @@ async function main() {
   let filesRead = 0
 
   for (let file of files) {
-    if (!isTextFile(file)) continue
+    let lowerFile = file.toLowerCase()
+    if (!isTextFile(file) && !lowerFile.includes("mcsettings") && !lowerFile.includes("mcprofile")) continue
 
     let content = readTextSafe(fm, file)
     if (!content) continue
 
     filesRead++
 
-    if (file.toLowerCase().includes("mcsettingsevents") || content.toLowerCase().includes("systemprofilerestrictions")) {
-      allEvents.push(...extractMCSettingsProfiles(content, file))
+    let lower = content.toLowerCase()
+
+    if (
+      lowerFile.includes("mcsettings") ||
+      lowerFile.includes("mcprofile") ||
+      lower.includes("profileevents") ||
+      lower.includes("systemprofilerestrictions") ||
+      lower.includes("operation") ||
+      lower.includes("timestamp")
+    ) {
+      allEvents.push(...extractProfileEvents(content, file))
     }
 
     jailbreak.push(...scanJailbreak(content, file))
@@ -443,15 +431,14 @@ async function main() {
   cleanEvents.sort((a, b) => {
     if (a.suspicious && !b.suspicious) return -1
     if (!a.suspicious && b.suspicious) return 1
+    if (a.action === "Remoção" && b.action !== "Remoção") return -1
     return a.code.localeCompare(b.code)
   })
-
-  let device = getDeviceInfo(allText)
 
   let html = generateHtml({
     events: cleanEvents,
     jailbreak,
-    device,
+    device: getDeviceInfo(allText),
     filesRead
   })
 
