@@ -1,6 +1,4 @@
-// HOOKING 
-// Créditos: SANTOS e r3
-// Discord: discord.gg/hooking
+// HOOKING
 
 const APP_NAME = "HOOKING"
 const CREDIT = "SANTOS e r3"
@@ -16,35 +14,18 @@ async function alertMsg(title, message) {
 
 function isMCFile(path) {
   let lower = path.toLowerCase()
-
   return (
     lower.includes("mcsettingsevents") ||
     lower.includes("mcprofileevents") ||
     lower.includes("mcsettings") ||
-    lower.includes("mcprofile") ||
-    lower.includes("managedsettings") ||
-    lower.includes("managedconfiguration")
+    lower.includes("mcprofile")
   )
 }
 
 function getFileType(path) {
   let lower = path.toLowerCase()
-
-  if (
-    lower.includes("mcsettingsevents") ||
-    lower.includes("mcsettings") ||
-    lower.includes("managedsettings")
-  ) {
-    return "MCSettings"
-  }
-
-  if (
-    lower.includes("mcprofileevents") ||
-    lower.includes("mcprofile")
-  ) {
-    return "MCProfile"
-  }
-
+  if (lower.includes("mcsettingsevents") || lower.includes("mcsettings")) return "MCSettings"
+  if (lower.includes("mcprofileevents") || lower.includes("mcprofile")) return "MCProfile"
   return "MC"
 }
 
@@ -72,25 +53,25 @@ function readTextSafe(fm, path) {
   }
 }
 
-function cleanText(s) {
-  return String(s || "")
+function normalizeRawText(content) {
+  return String(content || "")
     .replace(/\u0000/g, "")
-    .replace(/[^\x20-\x7EÀ-ÿ]/g, " ")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ")
     .replace(/\s+/g, " ")
-    .trim()
 }
 
-function normalizeCode(code) {
-  return cleanText(code)
-    .replace(/^[-_\s]+/, "")
-    .replace(/[-_\s]+$/, "")
+function cleanCode(code) {
+  return String(code || "")
+    .replace(/^[^a-zA-Z0-9]+/, "")
+    .replace(/[^a-zA-Z0-9._~\-]+$/, "")
+    .trim()
 }
 
 function uniqueEvents(events) {
   let map = {}
 
   for (let ev of events) {
-    let key = `${ev.source}|${ev.action}|${ev.code}|${ev.date}|${ev.file}`
+    let key = `${ev.source}|${ev.action}|${ev.code}|${ev.file}`
     if (!map[key]) map[key] = ev
   }
 
@@ -104,7 +85,6 @@ function findOperations(text) {
 
   while ((op = operationRegex.exec(text)) !== null) {
     let raw = op[1].toLowerCase()
-
     operations.push({
       type: raw.includes("install") ? "Instalação" : "Remoção",
       index: op.index
@@ -120,7 +100,6 @@ function findNearestOperation(operations, index, maxDistance) {
 
   for (let o of operations) {
     let distance = Math.abs(o.index - index)
-
     if (distance < nearestDistance && distance <= maxDistance) {
       nearestDistance = distance
       nearestOp = o
@@ -131,7 +110,7 @@ function findNearestOperation(operations, index, maxDistance) {
 }
 
 function extractDateNear(text, index) {
-  let block = text.slice(Math.max(0, index - 2500), Math.min(text.length, index + 2500))
+  let block = text.slice(Math.max(0, index - 3000), Math.min(text.length, index + 3000))
 
   let patterns = [
     /\d{2}\/\d{2}\/\d{4}[, ]+\d{2}:\d{2}:\d{2}/,
@@ -148,38 +127,11 @@ function extractDateNear(text, index) {
   return "Data/hora não encontrada"
 }
 
-function isSystemNoise(code) {
-  let lower = code.toLowerCase()
-
-  let bad = [
-    "apple.com/dtd",
-    "doctype",
-    "plist",
-    "version",
-    "encoding",
-    "dict",
-    "array",
-    "string",
-    "integer",
-    "false",
-    "true",
-    "root",
-    "timestamp",
-    "operation",
-    "process"
-  ]
-
-  if (bad.some(b => lower.includes(b))) return true
-  if (lower.length < 8) return true
-
-  return false
-}
-
 function classifyCode(code) {
   let lower = code.toLowerCase()
 
+  if (/^[a-f0-9]{64,128}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return "Hash + UUID"
   if (/^[a-f0-9]{64,128}$/i.test(code)) return "Hash/Certificado"
-  if (/^[a-f0-9]{40,128}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return "Hash + UUID"
   if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return "UUID"
   if (lower.startsWith("com.")) return "Bundle/Profile"
   if (lower.startsWith("xyz.")) return "Profile XYZ"
@@ -190,16 +142,41 @@ function classifyCode(code) {
   return "Código/Perfil"
 }
 
+function isSystemNoise(code) {
+  let lower = code.toLowerCase()
+
+  let blocked = [
+    "apple.com",
+    "doctype",
+    "plist",
+    "version",
+    "encoding",
+    "timestamp",
+    "operation",
+    "process",
+    "dictionary",
+    "array",
+    "string",
+    "integer",
+    "true",
+    "false"
+  ]
+
+  if (blocked.some(b => lower.includes(b))) return true
+  if (code.length < 8) return true
+
+  return false
+}
+
 function isInterestingCode(code) {
   let lower = code.toLowerCase()
 
   if (isSystemNoise(code)) return false
 
+  if (/^[a-f0-9]{64,128}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return true
   if (/^[a-f0-9]{64,128}$/i.test(code)) return true
-  if (/^[a-f0-9]{40,128}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return true
   if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return true
-
-  if (/^(com|xyz|net|org)\.[a-zA-Z0-9._~\-]{4,220}$/i.test(code)) return true
+  if (/^(com|xyz|net|org)\.[a-zA-Z0-9._~\-]{4,240}$/i.test(code)) return true
 
   if (lower.includes("khoindvn")) return true
   if (lower.includes("khoivdon")) return true
@@ -217,20 +194,18 @@ function extractCodesFromText(text) {
   let codes = []
 
   let regexes = [
-    /([a-f0-9]{40,128}-[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/gi,
+    /([a-f0-9]{64,128}-[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/gi,
     /([a-f0-9]{64,128})/gi,
     /([A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/gi,
-    /((?:com|xyz|net|org)\.[a-zA-Z0-9._~\-]{4,220})/g,
+    /((?:com|xyz|net|org)\.[a-zA-Z0-9._~\-]{4,240})/g,
     /([a-zA-Z0-9._~\-]*khoindvn[a-zA-Z0-9._~\-]*)/gi,
     /([a-zA-Z0-9._~\-]*khoivdon[a-zA-Z0-9._~\-]*)/gi
   ]
 
   for (let regex of regexes) {
     let m
-
     while ((m = regex.exec(text)) !== null) {
-      let code = normalizeCode(m[1])
-
+      let code = cleanCode(m[1])
       if (!code) continue
       if (!isInterestingCode(code)) continue
 
@@ -248,26 +223,24 @@ function extractCodesFromText(text) {
 function extractProfileCodes(content, file) {
   let events = []
   let source = getFileType(file)
-  let text = cleanText(content)
-
+  let text = normalizeRawText(content)
   let operations = findOperations(text)
   let codes = extractCodesFromText(text)
 
-  let maxDistance = source === "MCSettings" ? 9000 : 5000
-
   for (let c of codes) {
-    let nearestOp = findNearestOperation(operations, c.index, maxDistance)
+    let nearestOp = findNearestOperation(operations, c.index, source === "MCSettings" ? 999999 : 6000)
 
-    if (!nearestOp) {
-      continue
-    }
+    let action = "Evento MCSettings"
+    if (nearestOp) action = nearestOp.type
+
+    if (source === "MCProfile" && !nearestOp) continue
 
     events.push({
       source,
-      action: nearestOp.type,
+      action,
       code: c.code,
       codeType: c.type,
-      date: extractDateNear(text, c.index),
+      date: nearestOp ? extractDateNear(text, c.index) : "Sem install/remove próximo",
       file,
       position: c.index
     })
@@ -283,7 +256,7 @@ function generateHtml(data) {
   let mcProfile = data.events.filter(e => e.source === "MCProfile")
 
   function card(ev) {
-    let cls = ev.action === "Remoção" ? "remove" : "install"
+    let cls = ev.action === "Remoção" ? "remove" : ev.action === "Instalação" ? "install" : "event"
 
     return `
       <div class="card">
@@ -371,6 +344,10 @@ body {
   background:#410610;
   color:#ff5c72;
 }
+.event {
+  background:#302406;
+  color:#ffd56b;
+}
 .source {
   color:#ffd56b;
   margin-left:8px;
@@ -425,7 +402,7 @@ body {
 
 <div class="section">
   <div class="title">◆ MCSETTINGS (${mcSettings.length})</div>
-  ${mcSettings.length ? mcSettings.map(card).join("") : "<p>Nenhum evento encontrado na MCSettings.</p>"}
+  ${mcSettings.length ? mcSettings.map(card).join("") : "<p>Nenhum hash/perfil encontrado na MCSettings.</p>"}
 </div>
 
 <div class="section">
@@ -435,7 +412,7 @@ body {
 
 <div class="section">
   <div class="title">◆ TODOS OS EVENTOS (${data.events.length})</div>
-  ${data.events.length ? data.events.map(card).join("") : "<p>Nenhum código com install/remove encontrado.</p>"}
+  ${data.events.length ? data.events.map(card).join("") : "<p>Nenhum código encontrado.</p>"}
 </div>
 
 </body>
@@ -463,9 +440,7 @@ async function main() {
     if (!content) continue
 
     filesRead++
-
-    let extracted = extractProfileCodes(content, file)
-    allEvents.push(...extracted)
+    allEvents.push(...extractProfileCodes(content, file))
   }
 
   let cleanEvents = uniqueEvents(allEvents)
