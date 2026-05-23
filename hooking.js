@@ -158,6 +158,7 @@ function uniqueFindings(findings) {
 
   for (let f of findings) {
     let key = f.name
+
     if (!map[key]) {
       map[key] = {
         name: f.name,
@@ -179,6 +180,7 @@ function generateReport(data) {
   let status = score >= 70 ? "ALTO RISCO" : score >= 35 ? "RISCO MÉDIO" : "BAIXO RISCO"
 
   let report = ""
+
   report += "HOOKING - RELATÓRIO SYS DIAGNOSE iOS\n"
   report += "=====================================\n\n"
   report += `Data da análise: ${new Date().toLocaleString()}\n`
@@ -246,16 +248,12 @@ function generateReport(data) {
 }
 
 async function getInputPath() {
-  if (args.fileURLs && args.fileURLs.length > 0) {
-    return args.fileURLs[0].replace("file://", "")
-  }
-
   await alertMsg(
     "Hooking",
-    "Selecione a pasta ou arquivo extraído da sysdiagnose."
+    "Selecione a pasta extraída da sysdiagnose e toque em Abrir."
   )
 
-  let picked = await DocumentPicker.openFile()
+  let picked = await DocumentPicker.openFolder()
   return picked
 }
 
