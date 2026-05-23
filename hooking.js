@@ -1,19 +1,51 @@
-// HOOKING - Sysdiagnose Scanner iOS
+// HOOKING - Scanner MCSettingsEvents / MCProfile / Jailbreak
 
-const RULES = [
-  { name: "Frida", patterns: ["frida", "frida-server", "re.frida.server"], risk: 35 },
-  { name: "Dopamine", patterns: ["dopamine", "/var/jb", "ellekit"], risk: 40 },
-  { name: "MobileSubstrate", patterns: ["mobilesubstrate", "substrate", "cydiasubstrate"], risk: 35 },
-  { name: "Substitute", patterns: ["substitute", "libsubstitute"], risk: 30 },
-  { name: "Libhooker", patterns: ["libhooker"], risk: 30 },
-  { name: "Cydia", patterns: ["cydia", "/applications/cydia.app"], risk: 35 },
-  { name: "Sileo", patterns: ["sileo", "/applications/sileo.app"], risk: 35 },
-  { name: "Zebra", patterns: ["zebra", "/applications/zebra.app"], risk: 25 },
-  { name: "TrollStore", patterns: ["trollstore", "com.opa334.trollstore"], risk: 30 },
-  { name: "Debug / LLDB", patterns: ["ptrace", "debugserver", "lldb", "gdb"], risk: 20 },
-  { name: "MCSettings", patterns: ["mcsettings"], risk: 10 },
-  { name: "MCProfile", patterns: ["mcprofile"], risk: 10 },
-  { name: "MobileConfig", patterns: ["mobileconfig", "PayloadIdentifier", "PayloadUUID"], risk: 10 }
+const SUSPICIOUS_PROFILE_WORDS = [
+  "aimbot",
+  "freefire",
+  "hack",
+  "cheat",
+  "inject",
+  "injected",
+  "hook",
+  "frida",
+  "dopamine",
+  "ellekit",
+  "trollstore",
+  "cydia",
+  "sileo",
+  "substrate",
+  "substitute",
+  "libhooker",
+  "apple-dns",
+  "dns",
+  "vpn",
+  "proxy",
+  "warp",
+  "managed",
+  "configuration"
+]
+
+const JAILBREAK_WORDS = [
+  "frida",
+  "frida-server",
+  "re.frida.server",
+  "dopamine",
+  "ellekit",
+  "/var/jb",
+  "mobilesubstrate",
+  "substrate",
+  "cydiasubstrate",
+  "substitute",
+  "libsubstitute",
+  "libhooker",
+  "cydia",
+  "sileo",
+  "zebra",
+  "trollstore",
+  "debugserver",
+  "ptrace",
+  "lldb"
 ]
 
 const TEXT_EXTENSIONS = [
@@ -58,58 +90,105 @@ function walkDirectory(fm, dir, files = []) {
   return files
 }
 
-function getPlistValue(content, key) {
-  let regex = new RegExp(`<key>${key}<\\/key>\\s*<string>(.*?)<\\/string>`, "i")
-  let match = content.match(regex)
-  return match ? match[1].trim() : null
+function getAllMatches(content, regex) {
+  let out = []
+  let m
+  while ((m = regex.exec(content)) !== null) {
+    out.push(m[1])
+  }
+  return out
 }
 
-function extractProfiles(content) {
-  let profiles = []
-  let blocks = content.match(/<dict>[\s\S]*?<key>PayloadIdentifier<\/key>[\s\S]*?<\/dict>/gi) || []
+function normalizeCode(code) {
+  return String(code || "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .trim()
+}
 
-  for (let block of blocks) {
-    profiles.push({
-      name: getPlistValue(block, "PayloadDisplayName") || "Não encontrado",
-      identifier: getPlistValue(block, "PayloadIdentifier") || "Não encontrado",
-      uuid: getPlistValue(block, "PayloadUUID") || "Não encontrado",
-      organization: getPlistValue(block, "PayloadOrganization") || "Não encontrado",
-      type: getPlistValue(block, "PayloadType") || "Não encontrado"
-    })
+function detectActionNear(content, index) {
+  let start = Math.max(0, index - 600)
+  let end = Math.min(content.length, index + 600)
+  let block = content.slice(start, end).toLowerCase()
+
+  if (
+    block.includes("removal") ||
+    block.includes("removed") ||
+    block.includes("remove") ||
+    block.includes("remoção") ||
+    block.includes("remocao")
+  ) {
+    return "Remoção"
   }
 
-  return profiles
+  if (
+    block.includes("install") ||
+    block.includes("installed") ||
+    block.includes("instalação") ||
+    block.includes("instalacao")
+  ) {
+    return "Instalação"
+  }
+
+  return "Evento"
 }
 
-function extractEvents(content) {
-  let events = []
-  let lines = content.split(/\r?\n/)
+function detectDateNear(content, index) {
+  let start = Math.max(0, index - 800)
+  let end = Math.min(content.length, index + 800)
+  let block = content.slice(start, end)
 
-  let keywords = [
-    "profile installed",
-    "profile removed",
-    "installed profile",
-    "removed profile",
-    "mcprofile",
-    "mcsettings",
-    "configuration profile",
-    "PayloadIdentifier",
-    "PayloadUUID",
-    "PayloadDisplayName"
+  let patterns = [
+    /\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/,
+    /\d{2}\/\d{2}\/\d{4}[, ]+\d{2}:\d{2}:\d{2}/,
+    /\d{2}-\d{2}-\d{4}[, ]+\d{2}:\d{2}:\d{2}/,
+    /\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}/
   ]
 
-  for (let line of lines) {
-    let lower = line.toLowerCase()
+  for (let r of patterns) {
+    let m = block.match(r)
+    if (m) return m[0]
+  }
 
-    if (keywords.some(k => lower.includes(k.toLowerCase()))) {
-      let dateMatch =
-        line.match(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/) ||
-        line.match(/\d{2}\/\d{2}\/\d{4}[ T]\d{2}:\d{2}:\d{2}/) ||
-        line.match(/\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}/)
+  return "Data não encontrada"
+}
+
+function isSuspiciousProfile(code) {
+  let lower = code.toLowerCase()
+  return SUSPICIOUS_PROFILE_WORDS.some(w => lower.includes(w.toLowerCase()))
+}
+
+function extractMCSettingsProfiles(content, file) {
+  let events = []
+  let regexes = [
+    /<key>([^<]{8,200})<\/key>\s*<dict>/gi,
+    /<string>([^<]{8,200})<\/string>/gi,
+    /([a-f0-9]{32,80})/gi,
+    /((?:com\.)[a-zA-Z0-9._~\-]{5,120})/g
+  ]
+
+  for (let regex of regexes) {
+    let m
+    while ((m = regex.exec(content)) !== null) {
+      let code = normalizeCode(m[1])
+
+      if (!code) continue
+      if (code.length < 8) continue
+      if (code.includes("http")) continue
+      if (code.includes("plist")) continue
+      if (code.includes("DOCTYPE")) continue
+
+      let action = detectActionNear(content, m.index)
+      let date = detectDateNear(content, m.index)
+      let suspicious = isSuspiciousProfile(code)
 
       events.push({
-        date: dateMatch ? dateMatch[0] : "Data não encontrada",
-        line: line.trim()
+        action,
+        code,
+        date,
+        file,
+        suspicious
       })
     }
   }
@@ -117,162 +196,227 @@ function extractEvents(content) {
   return events
 }
 
-function scanIndicators(content) {
-  let findings = []
+function uniqueEvents(events) {
+  let map = {}
+
+  for (let ev of events) {
+    let key = `${ev.action}|${ev.code}|${ev.date}`
+    map[key] = ev
+  }
+
+  return Object.values(map)
+}
+
+function scanJailbreak(content, file) {
+  let found = []
   let lower = content.toLowerCase()
 
-  for (let rule of RULES) {
-    let matched = []
-
-    for (let p of rule.patterns) {
-      if (lower.includes(p.toLowerCase())) {
-        matched.push(p)
-      }
-    }
-
-    if (matched.length) {
-      findings.push({
-        name: rule.name,
-        patterns: matched,
-        risk: rule.risk
+  for (let word of JAILBREAK_WORDS) {
+    if (lower.includes(word.toLowerCase())) {
+      found.push({
+        indicator: word,
+        file
       })
     }
   }
 
-  return findings
+  return found
 }
 
-function uniqueProfiles(profiles) {
-  let map = {}
-
-  for (let p of profiles) {
-    let key = `${p.identifier}-${p.uuid}`
-    map[key] = p
+function getDeviceInfo(allText) {
+  let info = {
+    model: "iPhone OS",
+    ios: "Não encontrado",
+    serial: "Não encontrado"
   }
 
-  return Object.values(map)
+  let iosMatch =
+    allText.match(/ProductVersion["\s:=<string>]+([0-9.]+)/i) ||
+    allText.match(/iPhone OS\s+([0-9._]+)/i) ||
+    allText.match(/iOS\s+([0-9.]+)/i)
+
+  if (iosMatch) info.ios = iosMatch[1].replace(/_/g, ".")
+
+  let serialMatch =
+    allText.match(/SerialNumber["\s:=<string>]+([A-Z0-9]{8,20})/i) ||
+    allText.match(/Serial Number["\s:=]+([A-Z0-9]{8,20})/i)
+
+  if (serialMatch) info.serial = serialMatch[1]
+
+  return info
 }
 
-function uniqueFindings(findings) {
-  let map = {}
+function generateHtml(data) {
+  let installed = data.events.filter(e => e.action === "Instalação")
+  let removed = data.events.filter(e => e.action === "Remoção")
+  let abnormal = data.events.filter(e => e.suspicious)
 
-  for (let f of findings) {
-    let key = f.name
-
-    if (!map[key]) {
-      map[key] = {
-        name: f.name,
-        patterns: [],
-        risk: f.risk
-      }
-    }
-
-    map[key].patterns.push(...f.patterns)
-    map[key].patterns = [...new Set(map[key].patterns)]
+  function card(ev) {
+    let cls = ev.action === "Remoção" ? "remove" : ev.action === "Instalação" ? "install" : "event"
+    return `
+      <div class="card">
+        <div>
+          <span class="tag ${cls}">${ev.action}</span>
+          <div class="code">${ev.code}</div>
+          <div class="file">${ev.file.split("/").pop()}</div>
+        </div>
+        <div class="date">${ev.date}</div>
+      </div>
+    `
   }
 
-  return Object.values(map)
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Hooking Scanner</title>
+<style>
+body {
+  background:#050505;
+  color:#eee;
+  font-family: Menlo, monospace;
+  padding:22px;
 }
+h1 {
+  letter-spacing:5px;
+  font-size:28px;
+}
+.section {
+  border:1px solid #222;
+  padding:18px;
+  margin:22px 0;
+  background:#080808;
+}
+.title {
+  color:#888;
+  letter-spacing:5px;
+  margin-bottom:18px;
+}
+.row {
+  display:flex;
+  justify-content:space-between;
+  border-bottom:1px solid #111;
+  padding:12px 0;
+}
+.label { color:#888; }
+.value { color:#fff; }
+.card {
+  border:1px solid #181818;
+  padding:14px;
+  margin:12px 0;
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  background:#0b0b0b;
+}
+.tag {
+  padding:5px 10px;
+  border-radius:4px;
+  font-size:12px;
+}
+.install {
+  background:#063b1e;
+  color:#6bff9e;
+}
+.remove {
+  background:#410610;
+  color:#ff5c72;
+}
+.event {
+  background:#302406;
+  color:#ffd76b;
+}
+.code {
+  margin-top:12px;
+  color:#fff;
+  font-size:16px;
+  word-break:break-all;
+}
+.file {
+  margin-top:8px;
+  color:#555;
+  font-size:12px;
+}
+.date {
+  color:#aaa;
+  white-space:nowrap;
+  font-size:13px;
+}
+.danger {
+  color:#ff4f68;
+  font-weight:bold;
+}
+.small {
+  color:#555;
+  font-size:12px;
+}
+</style>
+</head>
+<body>
 
-function generateReport(data) {
-  let cleanFindings = uniqueFindings(data.findings)
-  let score = Math.min(100, cleanFindings.reduce((s, f) => s + f.risk, 0))
-  let status = score >= 70 ? "ALTO RISCO" : score >= 35 ? "RISCO MÉDIO" : "BAIXO RISCO"
+<h1>ANALISANDO <span class="small">SCANNER</span></h1>
 
-  let report = ""
+<div class="section">
+  <div class="title">◆ INFORMAÇÕES DO DISPOSITIVO</div>
+  <div class="row"><span class="label">Modelo</span><span class="value">${data.device.model}</span></div>
+  <div class="row"><span class="label">iOS</span><span class="value">${data.device.ios}</span></div>
+  <div class="row"><span class="label">Serial</span><span class="value">${data.device.serial}</span></div>
+  <div class="row"><span class="label">Arquivos lidos</span><span class="value">${data.filesRead}</span></div>
+</div>
 
-  report += "HOOKING - RELATÓRIO SYS DIAGNOSE iOS\n"
-  report += "=====================================\n\n"
-  report += `Data da análise: ${new Date().toLocaleString()}\n`
-  report += `Arquivos lidos: ${data.filesRead}\n`
-  report += `Score: ${score}/100\n`
-  report += `Status: ${status}\n\n`
+<div class="section">
+  <div class="title">◆ PERFIS INSTALADOS (${installed.length})</div>
+  ${installed.length ? installed.map(card).join("") : "<p>Nenhum perfil instalado encontrado.</p>"}
+</div>
 
-  report += "PERFIS ENCONTRADOS\n"
-  report += "------------------\n"
+<div class="section">
+  <div class="title">◆ DETECÇÕES (${data.jailbreak.length})</div>
+  ${data.jailbreak.length ? data.jailbreak.map(j => `
+    <div class="card">
+      <div>
+        <span class="tag remove">Detectado</span>
+        <div class="code">${j.indicator}</div>
+        <div class="file">${j.file.split("/").pop()}</div>
+      </div>
+    </div>
+  `).join("") : "<p>Nenhum indicador de jailbreak/hook encontrado.</p>"}
+</div>
 
-  if (!data.profiles.length) {
-    report += "Nenhum perfil encontrado.\n\n"
-  } else {
-    for (let p of data.profiles) {
-      report += `Nome: ${p.name}\n`
-      report += `Código/Identificador: ${p.identifier}\n`
-      report += `UUID: ${p.uuid}\n`
-      report += `Organização: ${p.organization}\n`
-      report += `Tipo: ${p.type}\n\n`
-    }
-  }
+<div class="section">
+  <div class="title">◆ PERFIS ANORMAIS (${abnormal.length})</div>
+  ${abnormal.length ? abnormal.map(e => `
+    <div class="card">
+      <div class="danger">⚠ ${e.code}</div>
+      <div class="date">${e.date}</div>
+    </div>
+  `).join("") : "<p>Nenhum perfil anormal encontrado.</p>"}
+</div>
 
-  report += "INSTALAÇÕES / REMOÇÕES / EVENTOS\n"
-  report += "--------------------------------\n"
+<div class="section">
+  <div class="title">◆ INSTALAÇÃO DE PERFIS</div>
+  ${data.events.length ? data.events.map(card).join("") : "<p>Nenhum evento encontrado.</p>"}
+</div>
 
-  if (!data.events.length) {
-    report += "Nenhum evento encontrado.\n\n"
-  } else {
-    for (let ev of data.events.slice(0, 500)) {
-      report += `Data/Hora: ${ev.date}\n`
-      report += `Linha: ${ev.line}\n\n`
-    }
-
-    if (data.events.length > 500) {
-      report += `...mais ${data.events.length - 500} eventos ocultados.\n\n`
-    }
-  }
-
-  report += "JAILBREAK / HOOK / FRIDA / DOPAMINE\n"
-  report += "------------------------------------\n"
-
-  if (!cleanFindings.length) {
-    report += "Nenhum indicador encontrado.\n\n"
-  } else {
-    for (let f of cleanFindings) {
-      report += `Indicador: ${f.name}\n`
-      report += `Padrões encontrados: ${f.patterns.join(", ")}\n`
-      report += `Risco: ${f.risk}\n\n`
-    }
-  }
-
-  report += "ARQUIVOS COM INDICADORES\n"
-  report += "------------------------\n"
-
-  if (!data.suspiciousFiles.length) {
-    report += "Nenhum arquivo suspeito listado.\n"
-  } else {
-    for (let sf of data.suspiciousFiles.slice(0, 300)) {
-      report += `Arquivo: ${sf.file}\n`
-      report += `Achados: ${sf.matches.join(", ")}\n\n`
-    }
-  }
-
-  return report
+</body>
+</html>
+`
 }
 
 async function getInputPath() {
-  await alertMsg(
-    "Hooking",
-    "Selecione a pasta extraída da sysdiagnose e toque em Abrir."
-  )
-
-  let picked = await DocumentPicker.openFolder()
-  return picked
+  await alertMsg("Hooking", "Selecione a pasta extraída da sysdiagnose e toque em Abrir.")
+  return await DocumentPicker.openFolder()
 }
 
 async function main() {
   let fm = FileManager.local()
   let input = await getInputPath()
 
-  let files = []
+  let files = fm.isDirectory(input) ? walkDirectory(fm, input) : [input]
 
-  if (fm.isDirectory(input)) {
-    files = walkDirectory(fm, input)
-  } else {
-    files = [input]
-  }
-
-  let allProfiles = []
   let allEvents = []
-  let allFindings = []
-  let suspiciousFiles = []
+  let jailbreak = []
+  let allText = ""
   let filesRead = 0
 
   for (let file of files) {
@@ -283,42 +427,43 @@ async function main() {
 
     filesRead++
 
-    let profiles = extractProfiles(content)
-    let events = extractEvents(content)
-    let findings = scanIndicators(content)
+    if (file.toLowerCase().includes("mcsettingsevents") || content.toLowerCase().includes("systemprofilerestrictions")) {
+      allEvents.push(...extractMCSettingsProfiles(content, file))
+    }
 
-    allProfiles.push(...profiles)
-    allEvents.push(...events)
-    allFindings.push(...findings)
+    jailbreak.push(...scanJailbreak(content, file))
 
-    if (findings.length) {
-      suspiciousFiles.push({
-        file,
-        matches: findings.map(f => f.name)
-      })
+    if (allText.length < 2000000) {
+      allText += "\n" + content.slice(0, 50000)
     }
   }
 
-  let report = generateReport({
-    filesRead,
-    profiles: uniqueProfiles(allProfiles),
-    events: allEvents,
-    findings: allFindings,
-    suspiciousFiles
+  let cleanEvents = uniqueEvents(allEvents)
+
+  cleanEvents.sort((a, b) => {
+    if (a.suspicious && !b.suspicious) return -1
+    if (!a.suspicious && b.suspicious) return 1
+    return a.code.localeCompare(b.code)
+  })
+
+  let device = getDeviceInfo(allText)
+
+  let html = generateHtml({
+    events: cleanEvents,
+    jailbreak,
+    device,
+    filesRead
   })
 
   let outFM = FileManager.iCloud()
-  let outDir = outFM.documentsDirectory()
-  let outPath = outFM.joinPath(outDir, `hooking_sysdiagnose_${Date.now()}.txt`)
+  let dir = outFM.documentsDirectory()
+  let path = outFM.joinPath(dir, `hooking_result_${Date.now()}.html`)
 
-  outFM.writeString(outPath, report)
+  outFM.writeString(path, html)
 
-  await alertMsg(
-    "Hooking finalizado",
-    `Sysdiagnose analisada.\n\nArquivos lidos: ${filesRead}\nRelatório salvo no Scriptable.`
-  )
+  await alertMsg("Hooking finalizado", `Foram lidos ${filesRead} arquivos.\nRelatório visual gerado.`)
 
-  QuickLook.present(outPath)
+  QuickLook.present(path)
 }
 
 await main()
