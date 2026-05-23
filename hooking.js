@@ -12,19 +12,27 @@ async function alertMsg(title, message) {
   await a.present()
 }
 
+function isMCFile(path) {
+  let lower = path.toLowerCase()
+
+  return (
+    lower.includes("mcprofile") ||
+    lower.includes("mcsettings") ||
+    lower.includes("settingsevents") ||
+    lower.includes("managedsettings") ||
+    lower.includes("managedconfiguration")
+  )
+}
+
 function walkDirectory(fm, dir, files = []) {
   let items = fm.listContents(dir)
 
   for (let item of items) {
     let path = fm.joinPath(dir, item)
-    let lower = path.toLowerCase()
 
     if (fm.isDirectory(path)) {
       walkDirectory(fm, path, files)
-    } else if (
-      lower.includes("mcsettings") ||
-      lower.includes("mcprofile")
-    ) {
+    } else if (isMCFile(path)) {
       files.push(path)
     }
   }
@@ -71,6 +79,7 @@ function extractProfileCodes(content, file) {
 
   let codeRegexes = [
     /([a-f0-9]{40,96}-[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/g,
+    /([A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/g,
     /([a-f0-9]{32,96})/g,
     /((?:com\.)[a-zA-Z0-9._~\-]{4,180})/g,
     /((?:xyz\.)[a-zA-Z0-9._~\-]{4,180})/g
@@ -88,7 +97,8 @@ function extractProfileCodes(content, file) {
 
       for (let o of operations) {
         let distance = Math.abs(o.index - m.index)
-        if (distance < nearestDistance && distance < 1800) {
+
+        if (distance < nearestDistance && distance < 2500) {
           nearestDistance = distance
           nearestOp = o
         }
@@ -112,7 +122,7 @@ function uniqueEvents(events) {
   let map = {}
 
   for (let ev of events) {
-    let key = `${ev.action}|${ev.code}`
+    let key = `${ev.action}|${ev.code}|${ev.file}`
     if (!map[key]) map[key] = ev
   }
 
@@ -260,14 +270,7 @@ async function main() {
   let filesRead = 0
 
   for (let file of files) {
-    let lower = file.toLowerCase()
-
-    if (
-      !lower.includes("mcsettings") &&
-      !lower.includes("mcprofile")
-    ) {
-      continue
-    }
+    if (!isMCFile(file)) continue
 
     let content = readTextSafe(fm, file)
     if (!content) continue
