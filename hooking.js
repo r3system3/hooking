@@ -4,6 +4,17 @@ const APP_NAME = "HOOKING"
 const CREDIT = "SANTOS e r3"
 const DISCORD = "discord.gg/hooking"
 
+const PROXY_RULES = [
+  { name: "Zeex free/vip", prefixes: ["78f", "d14"] },
+  { name: "Desconhecida", prefixes: ["84", "7d", "60a", "051", "3c4", "ae7", "0af", "proxyady", "704", "0d", "40e", "59ac"] },
+  { name: "Fatality bypass", prefixes: ["1ea", "b0", "2c", "9d"] },
+  { name: "Luxe cheats nova att", prefixes: ["b9", "a4"] },
+  { name: "XTREMO", prefixes: ["com.xtremo.mobile"] },
+  { name: "Dash", prefixes: ["70a", "dash.proxy"] },
+  { name: "eaysff", prefixes: ["60af"] },
+  { name: "brisado", prefixes: ["a4c"] }
+]
+
 async function alertMsg(title, message) {
   let a = new Alert()
   a.title = title
@@ -14,10 +25,7 @@ async function alertMsg(title, message) {
 
 function isMCFile(path) {
   let lower = path.toLowerCase()
-  return (
-    lower.includes("mcsettingsevents") ||
-    lower.includes("mcprofileevents")
-  )
+  return lower.includes("mcsettingsevents") || lower.includes("mcprofileevents")
 }
 
 function getFileType(path) {
@@ -30,14 +38,12 @@ function getFileType(path) {
 function walkDirectory(fm, dir, files = []) {
   for (let item of fm.listContents(dir)) {
     let path = fm.joinPath(dir, item)
-
     if (fm.isDirectory(path)) {
       walkDirectory(fm, path, files)
     } else if (isMCFile(path)) {
       files.push(path)
     }
   }
-
   return files
 }
 
@@ -61,6 +67,20 @@ function cleanCode(code) {
     .replace(/^[^a-zA-Z0-9]+/, "")
     .replace(/[^a-zA-Z0-9._~\-]+$/, "")
     .trim()
+}
+
+function detectProxyOwner(code) {
+  let lower = String(code || "").toLowerCase()
+
+  for (let rule of PROXY_RULES) {
+    for (let prefix of rule.prefixes) {
+      if (lower.startsWith(prefix.toLowerCase())) {
+        return rule.name
+      }
+    }
+  }
+
+  return null
 }
 
 function isNoise(code) {
@@ -251,7 +271,8 @@ function extractEvents(content, file) {
       code: c.code,
       codeType: c.codeType,
       date,
-      file
+      file,
+      proxyOwner: detectProxyOwner(c.code)
     })
   }
 
@@ -262,6 +283,7 @@ function generateHtml(data) {
   let installed = data.events.filter(e => e.action === "Instalação")
   let removed = data.events.filter(e => e.action === "Remoção")
   let detected = data.events.filter(e => e.action === "Detectado")
+  let proxyDetected = data.events.filter(e => e.proxyOwner)
   let mcSettingsEvents = data.events.filter(e => e.source === "MCSettingsEvents")
   let mcProfileEvents = data.events.filter(e => e.source === "MCProfileEvents")
 
@@ -275,6 +297,7 @@ function generateHtml(data) {
           <span class="source">${ev.source}</span>
           <span class="type">${ev.codeType}</span>
           <div class="code">${ev.code}</div>
+          ${ev.proxyOwner ? `<div class="proxy-alert">⚠ Proxy ${ev.proxyOwner} detectado</div>` : ""}
           <div class="file">${ev.file.split("/").pop()}</div>
         </div>
         <div class="date">${ev.date}</div>
@@ -297,31 +320,31 @@ body {
 }
 .header {
   text-align:center;
-  margin-top:24px;
-  margin-bottom:42px;
-  padding:22px 0 14px 0;
+  margin-top:26px;
+  margin-bottom:46px;
+  padding:26px 0 18px 0;
 }
 .main-name {
   color:#ffffff;
-  font-size:76px;
+  font-size:96px;
   font-weight:900;
-  letter-spacing:14px;
-  text-shadow:0 0 14px #fff, 0 0 32px #fff, 0 0 55px #777;
+  letter-spacing:16px;
+  text-shadow:0 0 18px #fff, 0 0 42px #fff, 0 0 70px #777;
   line-height:1;
 }
 .credits {
-  margin-top:20px;
+  margin-top:24px;
   color:#bbbbbb;
-  font-size:24px;
-  letter-spacing:4px;
-  line-height:1.9;
-  text-shadow:0 0 8px #555;
+  font-size:30px;
+  letter-spacing:5px;
+  line-height:2;
+  text-shadow:0 0 10px #555;
 }
 .discord {
   color:#ffffff;
-  font-size:26px;
-  font-weight:700;
-  text-shadow:0 0 10px #fff, 0 0 18px #777;
+  font-size:32px;
+  font-weight:800;
+  text-shadow:0 0 12px #fff, 0 0 24px #777;
 }
 .section {
   border:1px solid #222;
@@ -399,6 +422,13 @@ body {
   font-size:13px;
   text-align:right;
 }
+.proxy-alert {
+  margin-top:10px;
+  color:#ff4f68;
+  font-size:14px;
+  font-weight:700;
+  text-shadow:0 0 8px #600;
+}
 </style>
 </head>
 <body>
@@ -414,6 +444,12 @@ body {
   <div class="row"><span class="label">Eventos únicos</span><span class="value">${data.events.length}</span></div>
   <div class="row"><span class="label">MCSettingsEvents</span><span class="value">${mcSettingsEvents.length}</span></div>
   <div class="row"><span class="label">MCProfileEvents</span><span class="value">${mcProfileEvents.length}</span></div>
+  <div class="row"><span class="label">Proxys detectados</span><span class="value">${proxyDetected.length}</span></div>
+</div>
+
+<div class="section">
+  <div class="title">◆ AVISOS DE PROXY (${proxyDetected.length})</div>
+  ${proxyDetected.length ? proxyDetected.map(card).join("") : "<p>Nenhum proxy conhecido detectado.</p>"}
 </div>
 
 <div class="section">
@@ -472,6 +508,8 @@ async function main() {
   let cleanEvents = uniqueEvents(allEvents)
 
   cleanEvents.sort((a, b) => {
+    if (a.proxyOwner && !b.proxyOwner) return -1
+    if (!a.proxyOwner && b.proxyOwner) return 1
     if (a.source === "MCSettingsEvents" && b.source !== "MCSettingsEvents") return -1
     if (a.source !== "MCSettingsEvents" && b.source === "MCSettingsEvents") return 1
     if (a.action === "Instalação" && b.action !== "Instalação") return -1
