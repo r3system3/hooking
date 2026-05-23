@@ -25,14 +25,20 @@ async function alertMsg(title, message) {
 
 function isMCFile(path) {
   let lower = path.toLowerCase()
-  return lower.includes("mcsettingsevents") || lower.includes("mcprofileevents")
+  return (
+    lower.includes("mcprofile") ||
+    lower.includes("profileevents") ||
+    lower.includes("mcsetting") ||
+    lower.includes("settingsevents") ||
+    lower.includes("managedconfiguration")
+  )
 }
 
 function getFileType(path) {
   let lower = path.toLowerCase()
-  if (lower.includes("mcsettingsevents")) return "MCSettingsEvents"
-  if (lower.includes("mcprofileevents")) return "MCProfileEvents"
-  return "MC"
+  if (lower.includes("setting")) return "MCSettingsEvents"
+  if (lower.includes("profile")) return "MCProfileEvents"
+  return "MCEvents"
 }
 
 function walkDirectory(fm, dir, files = []) {
@@ -71,44 +77,12 @@ function cleanCode(code) {
 
 function detectProxyOwner(code) {
   let lower = String(code || "").toLowerCase()
-
   for (let rule of PROXY_RULES) {
     for (let prefix of rule.prefixes) {
-      if (lower.startsWith(prefix.toLowerCase())) {
-        return rule.name
-      }
+      if (lower.startsWith(prefix.toLowerCase())) return rule.name
     }
   }
-
   return null
-}
-
-function isNoise(code) {
-  let lower = code.toLowerCase()
-
-  let blocked = [
-    "apple.com",
-    "doctype",
-    "plist",
-    "version",
-    "encoding",
-    "timestamp",
-    "operation",
-    "process",
-    "dictionary",
-    "string",
-    "integer",
-    "array",
-    "true",
-    "false",
-    "systemsettings",
-    "restrictions",
-    "clientrestrictions",
-    "systemclientrestrictions",
-    "effective"
-  ]
-
-  return blocked.some(x => lower.includes(x))
 }
 
 function classifyCode(code) {
@@ -116,8 +90,10 @@ function classifyCode(code) {
 
   if (/^[a-f0-9]{64,128}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return "Hash + UUID"
   if (/^[a-f0-9]{64,128}$/i.test(code)) return "Hash/Certificado"
-  if (/^(com|xyz|net|org)\.[a-zA-Z0-9._~\-]{4,240}$/i.test(code)) return "Perfil"
+  if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return "UUID"
+  if (/^(com|xyz|net|org|applejr)\.[a-zA-Z0-9._~\-]{4,260}$/i.test(code)) return "Perfil"
   if (lower.includes("khoindvn") || lower.includes("khoivdon")) return "Perfil DNS"
+
   return "Código"
 }
 
@@ -125,18 +101,26 @@ function isWantedCode(code) {
   let lower = code.toLowerCase()
 
   if (!code || code.length < 12) return false
-  if (isNoise(code)) return false
+  if (lower.includes("apple.com/dtd")) return false
+  if (lower.includes("doctype")) return false
+  if (lower.includes("plist")) return false
+  if (lower === "profileevents") return false
+  if (lower === "timestamp") return false
+  if (lower === "operation") return false
+  if (lower === "process") return false
 
   if (/^[a-f0-9]{64,128}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return true
   if (/^[a-f0-9]{64,128}$/i.test(code)) return true
-  if (/^(com|xyz|net|org)\.[a-zA-Z0-9._~\-]{4,240}$/i.test(code)) return true
+  if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return true
+  if (/^(com|xyz|net|org|applejr)\.[a-zA-Z0-9._~\-]{4,260}$/i.test(code)) return true
 
   if (lower.includes("khoindvn")) return true
   if (lower.includes("khoivdon")) return true
   if (lower.includes("apple-dns")) return true
   if (lower.includes("fatality")) return true
-  if (lower.includes("freefire")) return true
-  if (lower.includes("aimbot")) return true
+  if (lower.includes("cloudflare")) return true
+  if (lower.includes("warp")) return true
+  if (lower.includes("adguard")) return true
   if (lower.includes("vpn")) return true
   if (lower.includes("dns")) return true
 
@@ -159,14 +143,13 @@ function findOperations(text) {
   return ops
 }
 
-function nearestOperation(ops, index, distanceLimit) {
+function nearestOperation(ops, index) {
   let best = null
   let bestDistance = Infinity
 
   for (let op of ops) {
     let d = Math.abs(op.index - index)
-
-    if (d < bestDistance && d <= distanceLimit) {
+    if (d < bestDistance) {
       best = op
       bestDistance = d
     }
@@ -176,7 +159,7 @@ function nearestOperation(ops, index, distanceLimit) {
 }
 
 function dateNear(text, index) {
-  let block = text.slice(Math.max(0, index - 5000), Math.min(text.length, index + 5000))
+  let block = text.slice(Math.max(0, index - 6000), Math.min(text.length, index + 6000))
 
   let patterns = [
     /\d{2}\/\d{2}\/\d{4}[, ]+\d{2}:\d{2}:\d{2}/,
@@ -191,7 +174,7 @@ function dateNear(text, index) {
     if (m) return m[0]
   }
 
-  return "Horário não encontrado"
+  return "Data/hora interna do bplist"
 }
 
 function removeSubMatches(codes) {
@@ -199,11 +182,8 @@ function removeSubMatches(codes) {
   let final = []
 
   for (let item of sorted) {
-    let existsInsideBigger = final.some(big => {
-      return big.code !== item.code && big.code.includes(item.code)
-    })
-
-    if (!existsInsideBigger) final.push(item)
+    let inside = final.some(big => big.code !== item.code && big.code.includes(item.code))
+    if (!inside) final.push(item)
   }
 
   return final
@@ -214,15 +194,13 @@ function extractCodes(text) {
 
   let regexes = [
     /([a-f0-9]{64,128}-[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/gi,
-    /((?:com|xyz|net|org)\.[a-zA-Z0-9._~\-]{4,240})/g,
+    /((?:com|xyz|net|org|applejr)\.[a-zA-Z0-9._~\-]{4,260})/g,
     /([a-f0-9]{64,128})/gi,
-    /([a-zA-Z0-9._~\-]*khoindvn[a-zA-Z0-9._~\-]*)/gi,
-    /([a-zA-Z0-9._~\-]*khoivdon[a-zA-Z0-9._~\-]*)/gi
+    /([A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/gi
   ]
 
   for (let regex of regexes) {
     let m
-
     while ((m = regex.exec(text)) !== null) {
       let code = cleanCode(m[1])
       if (!isWantedCode(code)) continue
@@ -240,12 +218,10 @@ function extractCodes(text) {
 
 function uniqueEvents(events) {
   let map = {}
-
   for (let ev of events) {
     let key = `${ev.source}|${ev.action}|${ev.code}`
     if (!map[key]) map[key] = ev
   }
-
   return Object.values(map)
 }
 
@@ -257,11 +233,7 @@ function extractEvents(content, file) {
   let events = []
 
   for (let c of codes) {
-    let limit = source === "MCSettingsEvents" ? 999999 : 7000
-    let op = nearestOperation(ops, c.index, limit)
-
-    if (source === "MCProfileEvents" && !op) continue
-
+    let op = nearestOperation(ops, c.index)
     let action = op ? op.type : "Detectado"
     let date = op ? dateNear(text, c.index) : "Sem install/remove próximo"
 
@@ -320,29 +292,29 @@ body {
 }
 .header {
   text-align:center;
-  margin-top:26px;
-  margin-bottom:46px;
-  padding:26px 0 18px 0;
+  margin-top:28px;
+  margin-bottom:52px;
+  padding:30px 0 20px 0;
 }
 .main-name {
   color:#ffffff;
-  font-size:96px;
+  font-size:108px;
   font-weight:900;
-  letter-spacing:16px;
-  text-shadow:0 0 18px #fff, 0 0 42px #fff, 0 0 70px #777;
+  letter-spacing:18px;
+  text-shadow:0 0 18px #fff, 0 0 42px #fff, 0 0 80px #777;
   line-height:1;
 }
 .credits {
-  margin-top:24px;
+  margin-top:26px;
   color:#bbbbbb;
-  font-size:30px;
+  font-size:34px;
   letter-spacing:5px;
   line-height:2;
   text-shadow:0 0 10px #555;
 }
 .discord {
   color:#ffffff;
-  font-size:32px;
+  font-size:36px;
   font-weight:800;
   text-shadow:0 0 12px #fff, 0 0 24px #777;
 }
@@ -383,18 +355,9 @@ body {
   border-radius:4px;
   font-size:12px;
 }
-.install {
-  background:#063b1e;
-  color:#6bff9e;
-}
-.remove {
-  background:#410610;
-  color:#ff5c72;
-}
-.event {
-  background:#302406;
-  color:#ffd56b;
-}
+.install { background:#063b1e; color:#6bff9e; }
+.remove { background:#410610; color:#ff5c72; }
+.event { background:#302406; color:#ffd56b; }
 .source {
   color:#ffd56b;
   margin-left:8px;
