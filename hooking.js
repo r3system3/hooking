@@ -26,39 +26,47 @@ async function alertMsg(title, message) {
 function isMCFile(path) {
   let lower = path.toLowerCase()
   return (
-    lower.includes("mcprofile") ||
-    lower.includes("profileevents") ||
-    lower.includes("mcsetting") ||
+    lower.includes("mcsettingsevents") ||
+    lower.includes("mcprofileevents") ||
     lower.includes("settingsevents") ||
-    lower.includes("managedconfiguration")
+    lower.includes("profileevents")
   )
 }
 
 function getFileType(path) {
   let lower = path.toLowerCase()
-  if (lower.includes("setting")) return "MCSettingsEvents"
-  if (lower.includes("profile")) return "MCProfileEvents"
+  if (lower.includes("settingsevents")) return "MCSettingsEvents"
+  if (lower.includes("profileevents")) return "MCProfileEvents"
   return "MCEvents"
 }
 
 function walkDirectory(fm, dir, files = []) {
   for (let item of fm.listContents(dir)) {
     let path = fm.joinPath(dir, item)
+
     if (fm.isDirectory(path)) {
       walkDirectory(fm, path, files)
     } else if (isMCFile(path)) {
       files.push(path)
     }
   }
+
   return files
 }
 
-function readTextSafe(fm, path) {
+function readAnyFile(fm, path) {
+  let output = ""
+
   try {
-    return fm.readString(path)
-  } catch (e) {
-    return ""
-  }
+    output += fm.readString(path)
+  } catch (e) {}
+
+  try {
+    let data = fm.read(path)
+    output += "\n" + data.toRawString()
+  } catch (e) {}
+
+  return output
 }
 
 function normalizeRawText(content) {
@@ -77,11 +85,13 @@ function cleanCode(code) {
 
 function detectProxyOwner(code) {
   let lower = String(code || "").toLowerCase()
+
   for (let rule of PROXY_RULES) {
     for (let prefix of rule.prefixes) {
       if (lower.startsWith(prefix.toLowerCase())) return rule.name
     }
   }
+
   return null
 }
 
@@ -90,10 +100,7 @@ function classifyCode(code) {
 
   if (/^[a-f0-9]{64,128}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return "Hash + UUID"
   if (/^[a-f0-9]{64,128}$/i.test(code)) return "Hash/Certificado"
-  if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return "UUID"
   if (/^(com|xyz|net|org|applejr)\.[a-zA-Z0-9._~\-]{4,260}$/i.test(code)) return "Perfil"
-  if (lower.includes("khoindvn") || lower.includes("khoivdon")) return "Perfil DNS"
-
   return "Código"
 }
 
@@ -105,13 +112,13 @@ function isWantedCode(code) {
   if (lower.includes("doctype")) return false
   if (lower.includes("plist")) return false
   if (lower === "profileevents") return false
+  if (lower === "settingsevents") return false
   if (lower === "timestamp") return false
   if (lower === "operation") return false
   if (lower === "process") return false
 
   if (/^[a-f0-9]{64,128}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return true
   if (/^[a-f0-9]{64,128}$/i.test(code)) return true
-  if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return true
   if (/^(com|xyz|net|org|applejr)\.[a-zA-Z0-9._~\-]{4,260}$/i.test(code)) return true
 
   if (lower.includes("khoindvn")) return true
@@ -159,13 +166,12 @@ function nearestOperation(ops, index) {
 }
 
 function dateNear(text, index) {
-  let block = text.slice(Math.max(0, index - 6000), Math.min(text.length, index + 6000))
+  let block = text.slice(Math.max(0, index - 8000), Math.min(text.length, index + 8000))
 
   let patterns = [
     /\d{2}\/\d{2}\/\d{4}[, ]+\d{2}:\d{2}:\d{2}/,
     /\d{2}-\d{2}-\d{4}[, ]+\d{2}:\d{2}:\d{2}/,
     /\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/,
-    /\d{2}\/\d{2}\/\d{2}[, ]+\d{2}:\d{2}:\d{2}/,
     /\d{2}:\d{2}:\d{2}/
   ]
 
@@ -193,10 +199,10 @@ function extractCodes(text) {
   let found = []
 
   let regexes = [
+    /([a-f0-9]{64}-[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/gi,
     /([a-f0-9]{64,128}-[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/gi,
     /((?:com|xyz|net|org|applejr)\.[a-zA-Z0-9._~\-]{4,260})/g,
-    /([a-f0-9]{64,128})/gi,
-    /([A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/gi
+    /([a-f0-9]{64,128})/gi
   ]
 
   for (let regex of regexes) {
@@ -218,10 +224,12 @@ function extractCodes(text) {
 
 function uniqueEvents(events) {
   let map = {}
+
   for (let ev of events) {
     let key = `${ev.source}|${ev.action}|${ev.code}`
     if (!map[key]) map[key] = ev
   }
+
   return Object.values(map)
 }
 
@@ -284,114 +292,28 @@ function generateHtml(data) {
 <meta charset="UTF-8">
 <title>${APP_NAME}</title>
 <style>
-body {
-  background:#050505;
-  color:#eee;
-  font-family: Menlo, monospace;
-  padding:22px;
-}
-.header {
-  text-align:center;
-  margin-top:28px;
-  margin-bottom:52px;
-  padding:30px 0 20px 0;
-}
-.main-name {
-  color:#ffffff;
-  font-size:108px;
-  font-weight:900;
-  letter-spacing:18px;
-  text-shadow:0 0 18px #fff, 0 0 42px #fff, 0 0 80px #777;
-  line-height:1;
-}
-.credits {
-  margin-top:26px;
-  color:#bbbbbb;
-  font-size:34px;
-  letter-spacing:5px;
-  line-height:2;
-  text-shadow:0 0 10px #555;
-}
-.discord {
-  color:#ffffff;
-  font-size:36px;
-  font-weight:800;
-  text-shadow:0 0 12px #fff, 0 0 24px #777;
-}
-.section {
-  border:1px solid #222;
-  padding:18px;
-  margin:22px 0;
-  background:#080808;
-}
-.title {
-  color:#888;
-  letter-spacing:5px;
-  margin-bottom:18px;
-}
-.row {
-  display:flex;
-  justify-content:space-between;
-  border-bottom:1px solid #111;
-  padding:12px 0;
-}
+body { background:#050505; color:#eee; font-family: Menlo, monospace; padding:22px; }
+.header { text-align:center; margin-top:28px; margin-bottom:52px; padding:30px 0 20px 0; }
+.main-name { color:#fff; font-size:108px; font-weight:900; letter-spacing:18px; text-shadow:0 0 18px #fff, 0 0 42px #fff, 0 0 80px #777; line-height:1; }
+.credits { margin-top:26px; color:#bbb; font-size:34px; letter-spacing:5px; line-height:2; text-shadow:0 0 10px #555; }
+.discord { color:#fff; font-size:36px; font-weight:800; text-shadow:0 0 12px #fff, 0 0 24px #777; }
+.section { border:1px solid #222; padding:18px; margin:22px 0; background:#080808; }
+.title { color:#888; letter-spacing:5px; margin-bottom:18px; }
+.row { display:flex; justify-content:space-between; border-bottom:1px solid #111; padding:12px 0; }
 .label { color:#888; }
 .value { color:#fff; }
-.card {
-  border:1px solid #181818;
-  padding:14px;
-  margin:12px 0;
-  background:#0b0b0b;
-  display:flex;
-  justify-content:space-between;
-  gap:16px;
-}
-.card-main {
-  flex:1;
-  min-width:0;
-}
-.tag {
-  padding:5px 10px;
-  border-radius:4px;
-  font-size:12px;
-}
+.card { border:1px solid #181818; padding:14px; margin:12px 0; background:#0b0b0b; display:flex; justify-content:space-between; gap:16px; }
+.card-main { flex:1; min-width:0; }
+.tag { padding:5px 10px; border-radius:4px; font-size:12px; }
 .install { background:#063b1e; color:#6bff9e; }
 .remove { background:#410610; color:#ff5c72; }
 .event { background:#302406; color:#ffd56b; }
-.source {
-  color:#ffd56b;
-  margin-left:8px;
-  font-size:12px;
-}
-.type {
-  color:#777;
-  margin-left:8px;
-  font-size:12px;
-}
-.code {
-  margin-top:12px;
-  color:#fff;
-  font-size:16px;
-  word-break:break-all;
-}
-.file {
-  margin-top:8px;
-  color:#555;
-  font-size:12px;
-}
-.date {
-  color:#aaa;
-  white-space:nowrap;
-  font-size:13px;
-  text-align:right;
-}
-.proxy-alert {
-  margin-top:10px;
-  color:#ff4f68;
-  font-size:14px;
-  font-weight:700;
-  text-shadow:0 0 8px #600;
-}
+.source { color:#ffd56b; margin-left:8px; font-size:12px; }
+.type { color:#777; margin-left:8px; font-size:12px; }
+.code { margin-top:12px; color:#fff; font-size:16px; word-break:break-all; }
+.file { margin-top:8px; color:#555; font-size:12px; }
+.date { color:#aaa; white-space:nowrap; font-size:13px; text-align:right; }
+.proxy-alert { margin-top:10px; color:#ff4f68; font-size:14px; font-weight:700; text-shadow:0 0 8px #600; }
 </style>
 </head>
 <body>
@@ -403,6 +325,7 @@ body {
 
 <div class="section">
   <div class="title">◆ ARQUIVOS ANALISADOS</div>
+  <div class="row"><span class="label">Arquivos MC encontrados</span><span class="value">${data.filesFound}</span></div>
   <div class="row"><span class="label">Arquivos lidos</span><span class="value">${data.filesRead}</span></div>
   <div class="row"><span class="label">Eventos únicos</span><span class="value">${data.events.length}</span></div>
   <div class="row"><span class="label">MCSettingsEvents</span><span class="value">${mcSettingsEvents.length}</span></div>
@@ -410,35 +333,12 @@ body {
   <div class="row"><span class="label">Proxys detectados</span><span class="value">${proxyDetected.length}</span></div>
 </div>
 
-<div class="section">
-  <div class="title">◆ AVISOS DE PROXY (${proxyDetected.length})</div>
-  ${proxyDetected.length ? proxyDetected.map(card).join("") : "<p>Nenhum proxy conhecido detectado.</p>"}
-</div>
-
-<div class="section">
-  <div class="title">◆ PERFIS INSTALADOS (${installed.length})</div>
-  ${installed.length ? installed.map(card).join("") : "<p>Nenhuma instalação encontrada.</p>"}
-</div>
-
-<div class="section">
-  <div class="title">◆ PERFIS REMOVIDOS (${removed.length})</div>
-  ${removed.length ? removed.map(card).join("") : "<p>Nenhuma remoção encontrada.</p>"}
-</div>
-
-<div class="section">
-  <div class="title">◆ MCSETTINGSEVENTS (${mcSettingsEvents.length})</div>
-  ${mcSettingsEvents.length ? mcSettingsEvents.map(card).join("") : "<p>Nenhum hash/perfil encontrado na MCSettingsEvents.</p>"}
-</div>
-
-<div class="section">
-  <div class="title">◆ MCPROFILEEVENTS (${mcProfileEvents.length})</div>
-  ${mcProfileEvents.length ? mcProfileEvents.map(card).join("") : "<p>Nenhum evento encontrado na MCProfileEvents.</p>"}
-</div>
-
-<div class="section">
-  <div class="title">◆ DETECTADOS SEM AÇÃO (${detected.length})</div>
-  ${detected.length ? detected.map(card).join("") : "<p>Nenhum detectado sem ação.</p>"}
-</div>
+<div class="section"><div class="title">◆ AVISOS DE PROXY (${proxyDetected.length})</div>${proxyDetected.length ? proxyDetected.map(card).join("") : "<p>Nenhum proxy conhecido detectado.</p>"}</div>
+<div class="section"><div class="title">◆ PERFIS INSTALADOS (${installed.length})</div>${installed.length ? installed.map(card).join("") : "<p>Nenhuma instalação encontrada.</p>"}</div>
+<div class="section"><div class="title">◆ PERFIS REMOVIDOS (${removed.length})</div>${removed.length ? removed.map(card).join("") : "<p>Nenhuma remoção encontrada.</p>"}</div>
+<div class="section"><div class="title">◆ MCSETTINGSEVENTS (${mcSettingsEvents.length})</div>${mcSettingsEvents.length ? mcSettingsEvents.map(card).join("") : "<p>Nenhum hash/perfil encontrado na MCSettingsEvents.</p>"}</div>
+<div class="section"><div class="title">◆ MCPROFILEEVENTS (${mcProfileEvents.length})</div>${mcProfileEvents.length ? mcProfileEvents.map(card).join("") : "<p>Nenhum evento encontrado na MCProfileEvents.</p>"}</div>
+<div class="section"><div class="title">◆ DETECTADOS SEM AÇÃO (${detected.length})</div>${detected.length ? detected.map(card).join("") : "<p>Nenhum detectado sem ação.</p>"}</div>
 
 </body>
 </html>
@@ -459,9 +359,7 @@ async function main() {
   let filesRead = 0
 
   for (let file of files) {
-    if (!isMCFile(file)) continue
-
-    let content = readTextSafe(fm, file)
+    let content = readAnyFile(fm, file)
     if (!content) continue
 
     filesRead++
@@ -482,7 +380,8 @@ async function main() {
 
   let html = generateHtml({
     events: cleanEvents,
-    filesRead
+    filesRead,
+    filesFound: files.length
   })
 
   let outFM = FileManager.iCloud()
@@ -493,7 +392,7 @@ async function main() {
 
   await alertMsg(
     "Hooking finalizado",
-    `Arquivos lidos: ${filesRead}\nEventos únicos: ${cleanEvents.length}`
+    `Arquivos MC encontrados: ${files.length}\nArquivos lidos: ${filesRead}\nEventos únicos: ${cleanEvents.length}`
   )
 
   QuickLook.present(path)
