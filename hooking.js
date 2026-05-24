@@ -24,12 +24,13 @@ async function alertMsg(title, message) {
 }
 
 async function pickMCFiles() {
-  await alertMsg(
-    "Hooking",
-    "Selecione diretamente os arquivos MCSettingsEvents.plist e MCProfileEvents.plist."
-  )
+  await alertMsg("Hooking", "Selecione primeiro o MCSettingsEvents.plist.")
+  let settings = await DocumentPicker.openFile()
 
-  return await DocumentPicker.openFiles()
+  await alertMsg("Hooking", "Agora selecione o MCProfileEvents.plist.")
+  let profile = await DocumentPicker.openFile()
+
+  return [settings, profile]
 }
 
 function readAny(fm, path) {
@@ -81,35 +82,15 @@ function isJunk(code) {
   let lower = code.toLowerCase()
 
   let junk = [
-    "profileevents",
-    "systemsettings",
-    "systemclientrestrictions",
-    "systemprofilerestrictions",
-    "effectivesettings",
-    "restrictions",
-    "timestamp",
-    "operation",
-    "process",
-    "clientrestrictions",
-    "clienttype",
-    "restrictedbool",
-    "intersection",
-    "union",
-    "values",
-    "event",
-    "install",
-    "remove",
-    "removed",
-    "installed",
-    "apple.com",
-    "plist",
-    "bplist",
-    "managedconfiguration",
-    "managedsettingsextension",
-    "mcrestrictionmanagerwriter",
-    "recomputeeffectiveusersettings",
-    "applyrestrictiondictionary",
-    "localizedclientdescription"
+    "profileevents", "systemsettings", "systemclientrestrictions",
+    "systemprofilerestrictions", "effectivesettings", "restrictions",
+    "timestamp", "operation", "process", "clientrestrictions",
+    "clienttype", "restrictedbool", "intersection", "union",
+    "values", "event", "install", "remove", "removed", "installed",
+    "apple.com", "plist", "bplist", "managedconfiguration",
+    "managedsettingsextension", "mcrestrictionmanagerwriter",
+    "recomputeeffectiveusersettings", "applyrestrictiondictionary",
+    "localizedclientdescription", "allow", "force"
   ]
 
   if (junk.some(j => lower.includes(j))) return true
