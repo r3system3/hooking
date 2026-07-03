@@ -1,4 +1,4 @@
-// HOOKING - Versão Ultra Agressiva na Detecção
+// HOOKING - Leitor direto de MCSettingsEvents e MCProfileEvents (Versão Forte)
 
 const APP_NAME = "HOOKING"
 const CREDIT = "SANTOS e r3"
@@ -23,41 +23,33 @@ async function alertMsg(title, message) {
 }
 
 async function pickMCFiles() {
-  await alertMsg("Hooking", "Selecione o MCSettingsEvents.plist")
+  await alertMsg("Hooking", "Selecione primeiro o MCSettingsEvents.plist.")
   let settings = await DocumentPicker.openFile()
-  await alertMsg("Hooking", "Selecione o MCProfileEvents.plist")
+  await alertMsg("Hooking", "Agora selecione o MCProfileEvents.plist.")
   let profile = await DocumentPicker.openFile()
   return [settings, profile]
 }
 
-// Leitura ULTRA agressiva
+// Leitura mais agressiva possível
 function readAny(fm, path) {
   let out = ""
   try {
-    out += (fm.readString(path) || "")
-  } catch(e) {}
-
+    out += fm.readString(path) || ""
+  } catch (e) {}
   try {
     let data = fm.read(path)
     if (data) {
       out += "\n" + data.toRawString()
-      // Força conversão de bytes
-      let bytes = []
-      for (let i = 0; i < Math.min(data.length, 500000); i++) {
-        bytes.push(data[i])
-      }
-      out += "\n" + String.fromCharCode.apply(null, bytes)
     }
-  } catch(e) {}
-
+  } catch (e) {}
   return out
 }
 
 function cleanRaw(raw) {
   return String(raw || "")
     .replace(/\0/g, " ")
-    .replace(/[\x00-\x1F\x7F-\x9F]/g, " ")
-    .replace(/[^ -~À-ÿa-f0-9]/gi, " ")
+    .replace(/[\x00-\x1F\x7F]/g, " ")
+    .replace(/[^ -~a-f0-9]/gi, " ")
     .replace(/\s+/g, " ")
     .trim()
 }
@@ -67,53 +59,58 @@ function getSource(path) {
   return p.includes("setting") ? "MCSettingsEvents" : "MCProfileEvents"
 }
 
-// Detecção agressiva
 function cleanCode(code) {
-  return String(code).trim().replace(/^[^a-zA-Z0-9]+/, "").replace(/[^a-zA-Z0-9._~\-]+$/, "").trim()
+  return String(code || "").trim()
+    .replace(/^[^a-zA-Z0-9]+/, "")
+    .replace(/[^a-zA-Z0-9._~\-]+$/, "")
+    .trim()
 }
 
 function looksLikeCode(code) {
-  if (!code || code.length < 20) return false
-  let l = code.toLowerCase()
-  if (/^[a-f0-9]{40,120}$/i.test(code)) return true
+  if (!code || code.length < 24) return false
+  let lower = code.toLowerCase()
+  if (/^[a-f0-9]{40,128}$/i.test(code)) return true
   if (/^[a-f0-9]{32,}-[a-f0-9-]{20,80}$/i.test(code)) return true
-  if (/^(com|net|org|xyz|io|me)\./i.test(code)) return true
-  if (l.includes("proxy") || l.includes("vpn") || l.includes("dns")) return true
+  if (/^(com|net|org|xyz|io|me)\.[a-z0-9._-]{8,}$/i.test(code)) return true
+  if (lower.includes("proxy") || lower.includes("vpn") || lower.includes("dns")) return true
   return false
 }
 
 function classifyCode(code) {
   if (/^[a-f0-9]{40,}$/i.test(code)) return "Hash"
-  if (/[a-f0-9-]{30,}/.test(code)) return "Hash+UUID"
+  if (/^[a-f0-9]{32,}-[a-f0-9-]{20,}$/i.test(code)) return "Hash + UUID"
   if (/^com\./i.test(code)) return "Perfil"
   return "Código"
 }
 
 function detectProxyOwner(code) {
-  let l = String(code).toLowerCase()
+  let lower = String(code).toLowerCase()
   for (let rule of PROXY_RULES) {
-    for (let p of rule.prefixes) {
-      if (l.startsWith(p)) return rule.name
+    for (let prefix of rule.prefixes) {
+      if (lower.startsWith(prefix.toLowerCase())) return rule.name
     }
   }
   return null
 }
 
-// Funções restantes (mantidas simples)
 function extractCodes(text) {
   let found = []
   const regexes = [
     /([a-f0-9]{32,}-[a-f0-9-]{20,})/gi,
-    /([a-f0-9]{40,120})/gi,
-    /((?:com|net|org|xyz)\.[a-zA-Z0-9._-]{10,100})/gi
+    /([a-f0-9]{40,128})/gi,
+    /((?:com|net|org|xyz|io|me)\.[a-zA-Z0-9._-]{10,140})/gi
   ]
 
-  for (let r of regexes) {
+  for (let regex of regexes) {
     let m
-    while ((m = r.exec(text)) !== null) {
+    while ((m = regex.exec(text)) !== null) {
       let code = cleanCode(m[1])
       if (looksLikeCode(code)) {
-        found.push({code, index: m.index, codeType: classifyCode(code)})
+        found.push({
+          code: code,
+          index: m.index,
+          codeType: classifyCode(code)
+        })
       }
     }
   }
@@ -126,38 +123,58 @@ function extractEvents(raw, path) {
   let codes = extractCodes(text)
   let events = []
 
-  codes.forEach(c => {
+  for (let c of codes) {
     events.push({
-      source,
+      source: source,
       action: "Detectado",
       code: c.code,
       codeType: c.codeType,
-      date: "Detectado no arquivo",
+      date: "Detectado",
       file: path,
       proxyOwner: detectProxyOwner(c.code)
     })
-  })
-
+  }
   return events
 }
 
 function generateHtml(data) {
-  // HTML simplificado para teste rápido
-  let html = `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>${APP_NAME}</title>
-<style>body{background:#000;color:#0f0;font-family:Menlo;padding:20px;}</style></head>
-<body>
-<h1>${APP_NAME} - DETECÇÃO</h1>
-<p>Arquivos lidos: ${data.filesRead} | Eventos: ${data.events.length}</p>
-${data.events.map(ev => `
-  <div style="background:#111;padding:10px;margin:8px 0;border-left:4px solid #0f0;">
-    <b>${ev.action}</b> - ${ev.codeType}<br>
-    <small>${ev.code}</small><br>
-    ${ev.proxyOwner ? `<b style="color:red">PROXY: ${ev.proxyOwner}</b>` : ''}
-  </div>`).join('')}
-</body></html>`
+  let installed = data.events.filter(e => e.action.includes("Instal"))
+  let removed = data.events.filter(e => e.action.includes("Remo"))
+  let proxyDetected = data.events.filter(e => e.proxyOwner)
 
-  return html
+  function card(ev) {
+    let cls = "event"
+    return `
+      <div class="card">
+        <div class="card-main">
+          <span class="tag ${cls}">${ev.action}</span>
+          <span class="source">${ev.source}</span>
+          <span class="type">${ev.codeType}</span>
+          <div class="code">${ev.code}</div>
+          ${ev.proxyOwner ? `<div class="proxy-alert">⚠ ${ev.proxyOwner}</div>` : ""}
+        </div>
+      </div>
+    `
+  }
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>${APP_NAME}</title>
+<style>
+body { background:#050505; color:#eee; font-family:Menlo,monospace; padding:20px; }
+.main-name { font-size:90px; text-align:center; }
+.card { background:#111; padding:12px; margin:10px 0; border-left:4px solid #0a0; }
+.code { word-break:break-all; font-size:15px; }
+.proxy-alert { color:#ff4444; font-weight:bold; }
+</style>
+</head>
+<body>
+<div class="main-name">${APP_NAME}</div>
+<div class="section"><h2>Eventos Encontrados: ${data.events.length}</h2>${data.events.map(card).join("")}</div>
+</body>
+</html>`
 }
 
 async function main() {
@@ -168,15 +185,16 @@ async function main() {
 
   for (let file of files) {
     let raw = readAny(fm, file)
-    if (raw.length > 100) {
+    if (raw.length > 200) {
       filesRead++
       allEvents = allEvents.concat(extractEvents(raw, file))
     }
   }
 
-  let html = generateHtml({events: allEvents, filesRead})
+  let html = generateHtml({ events: allEvents, filesRead })
+
   let outFM = FileManager.iCloud()
-  let path = outFM.joinPath(outFM.documentsDirectory(), `hooking_${Date.now()}.html`)
+  let path = outFM.joinPath(outFM.documentsDirectory(), `hooking_result_${Date.now()}.html`)
   outFM.writeString(path, html)
 
   await alertMsg("Finalizado", `Eventos encontrados: ${allEvents.length}`)
