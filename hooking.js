@@ -1,4 +1,4 @@
-// HOOKING - Leitor direto de MCSettingsEvents e MCProfileEvents (Detect Melhorada)
+// HOOKING - Versão Ultra Agressiva na Detecção
 
 const APP_NAME = "HOOKING"
 const CREDIT = "SANTOS e r3"
@@ -8,10 +8,9 @@ const PROXY_RULES = [
   { name: "Zeex free/vip", prefixes: ["78f", "d14"] },
   { name: "Desconhecida", prefixes: ["84", "7d", "60a", "051", "3c4", "ae7", "0af", "proxyady", "704", "0d", "40e", "59ac"] },
   { name: "Fatality bypass", prefixes: ["1ea", "b0", "2c", "9d"] },
-  { name: "Luxe cheats nova att", prefixes: ["b9", "a4"] },
+  { name: "Luxe cheats", prefixes: ["b9", "a4"] },
   { name: "XTREMO", prefixes: ["com.xtremo.mobile"] },
   { name: "Dash", prefixes: ["70a", "dash.proxy"] },
-  { name: "eaysff", prefixes: ["60af"] },
   { name: "brisado", prefixes: ["a4c"] }
 ]
 
@@ -24,263 +23,141 @@ async function alertMsg(title, message) {
 }
 
 async function pickMCFiles() {
-  await alertMsg("Hooking", "Selecione primeiro o MCSettingsEvents.plist.")
+  await alertMsg("Hooking", "Selecione o MCSettingsEvents.plist")
   let settings = await DocumentPicker.openFile()
-
-  await alertMsg("Hooking", "Agora selecione o MCProfileEvents.plist.")
+  await alertMsg("Hooking", "Selecione o MCProfileEvents.plist")
   let profile = await DocumentPicker.openFile()
-
   return [settings, profile]
 }
 
+// Leitura ULTRA agressiva
 function readAny(fm, path) {
   let out = ""
-  try { out += fm.readString(path) } catch(e){}
+  try {
+    out += (fm.readString(path) || "")
+  } catch(e) {}
+
   try {
     let data = fm.read(path)
-    out += "\n" + data.toRawString()
-  } catch(e){}
+    if (data) {
+      out += "\n" + data.toRawString()
+      // Força conversão de bytes
+      let bytes = []
+      for (let i = 0; i < Math.min(data.length, 500000); i++) {
+        bytes.push(data[i])
+      }
+      out += "\n" + String.fromCharCode.apply(null, bytes)
+    }
+  } catch(e) {}
+
   return out
 }
 
 function cleanRaw(raw) {
   return String(raw || "")
     .replace(/\0/g, " ")
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ")
-    .replace(/[^\x20-\x7EÀ-ÿ]/g, " ")
+    .replace(/[\x00-\x1F\x7F-\x9F]/g, " ")
+    .replace(/[^ -~À-ÿa-f0-9]/gi, " ")
     .replace(/\s+/g, " ")
-}
-
-function getSource(path, text) {
-  let p = path.toLowerCase()
-  let t = text.toLowerCase()
-  if (p.includes("setting") || t.includes("systemsettings")) return "MCSettingsEvents"
-  if (p.includes("profile") || t.includes("profileevents")) return "MCProfileEvents"
-  return "Arquivo MC"
-}
-
-// ====================== DETECÇÃO FORTIFICADA ======================
-
-function cleanCode(code) {
-  return String(code || "").trim()
-    .replace(/^[^a-zA-Z0-9]+/, "")
-    .replace(/[^a-zA-Z0-9._~\-]+$/, "")
     .trim()
 }
 
-function isJunk(code) {
-  if (!code || code.length < 16) return true
-  let lower = code.toLowerCase()
-  const junk = ["apple.com", "mcrestrictionmanagerwriter", "recomputeeffective", "payloadtype", "systemsettings"]
-  return junk.some(j => lower.includes(j))
+function getSource(path) {
+  let p = path.toLowerCase()
+  return p.includes("setting") ? "MCSettingsEvents" : "MCProfileEvents"
+}
+
+// Detecção agressiva
+function cleanCode(code) {
+  return String(code).trim().replace(/^[^a-zA-Z0-9]+/, "").replace(/[^a-zA-Z0-9._~\-]+$/, "").trim()
 }
 
 function looksLikeCode(code) {
-  if (isJunk(code)) return false
+  if (!code || code.length < 20) return false
   let l = code.toLowerCase()
-
-  // Padrões principais que você quer pegar
-  if (/^[a-f0-9]{40,100}$/i.test(code)) return true                    // Hash longo
-  if (/^[a-f0-9]{32,}-[a-f0-9-]{20,80}$/i.test(code)) return true     // Hash + UUID
-  if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return true
-  if (/^(com|net|org|xyz|io|me)\.[a-z0-9._-]{10,}$/i.test(code)) return true
-
-  return code.length >= 30
+  if (/^[a-f0-9]{40,120}$/i.test(code)) return true
+  if (/^[a-f0-9]{32,}-[a-f0-9-]{20,80}$/i.test(code)) return true
+  if (/^(com|net|org|xyz|io|me)\./i.test(code)) return true
+  if (l.includes("proxy") || l.includes("vpn") || l.includes("dns")) return true
+  return false
 }
 
 function classifyCode(code) {
-  if (/^[a-f0-9]{40,}$/i.test(code)) return "Hash Longo"
-  if (/^[a-f0-9]{32,}-[a-f0-9-]{20,}$/i.test(code)) return "Hash + UUID"
-  if (/^[a-f0-9]{8}-[a-f0-9-]{20,}$/i.test(code)) return "UUID"
-  if (/^(com|net|org|xyz)/i.test(code)) return "Perfil"
+  if (/^[a-f0-9]{40,}$/i.test(code)) return "Hash"
+  if (/[a-f0-9-]{30,}/.test(code)) return "Hash+UUID"
+  if (/^com\./i.test(code)) return "Perfil"
   return "Código"
 }
 
 function detectProxyOwner(code) {
-  let lower = String(code || "").toLowerCase()
+  let l = String(code).toLowerCase()
   for (let rule of PROXY_RULES) {
-    for (let prefix of rule.prefixes) {
-      if (lower.startsWith(prefix.toLowerCase())) return rule.name
+    for (let p of rule.prefixes) {
+      if (l.startsWith(p)) return rule.name
     }
   }
   return null
 }
 
-// As demais funções permanecem iguais (findOperations, nearestOperation, dateNear, etc.)
-function findOperations(text) {
-  let ops = []
-  let regex = /(install|installed|remove|removed)/gi
-  let m
-  while ((m = regex.exec(text)) !== null) {
-    ops.push({
-      type: m[1].toLowerCase().includes("install") ? "Instalação" : "Remoção",
-      index: m.index
-    })
-  }
-  return ops
-}
-
-function nearestOperation(ops, index) {
-  let best = null, dist = Infinity
-  for (let op of ops) {
-    let d = Math.abs(op.index - index)
-    if (d < dist) { dist = d; best = op }
-  }
-  return best
-}
-
-function dateNear(text, index) {
-  let block = text.slice(Math.max(0, index - 12000), Math.min(text.length, index + 12000))
-  let patterns = [/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z/, /\d{2}\/\d{2}\/\d{4}.?\d{2}:\d{2}/]
-  for (let p of patterns) {
-    let m = block.match(p)
-    if (m) return m[0]
-  }
-  return "Data interna do plist"
-}
-
+// Funções restantes (mantidas simples)
 function extractCodes(text) {
   let found = []
-
   const regexes = [
-    /([a-f0-9]{32,}-[a-f0-9-]{20,})/gi,           // Hash + UUID (principal)
-    /([a-f0-9]{40,100})/gi,                       // Hashes longos
-    /([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/gi,
-    /((?:com|net|org|xyz|io|me)\.[a-zA-Z0-9._-]{10,140})/gi
+    /([a-f0-9]{32,}-[a-f0-9-]{20,})/gi,
+    /([a-f0-9]{40,120})/gi,
+    /((?:com|net|org|xyz)\.[a-zA-Z0-9._-]{10,100})/gi
   ]
 
-  for (let regex of regexes) {
+  for (let r of regexes) {
     let m
-    while ((m = regex.exec(text)) !== null) {
+    while ((m = r.exec(text)) !== null) {
       let code = cleanCode(m[1])
       if (looksLikeCode(code)) {
-        found.push({
-          code: code,
-          index: m.index,
-          codeType: classifyCode(code)
-        })
+        found.push({code, index: m.index, codeType: classifyCode(code)})
       }
     }
   }
-
-  return removeSubMatches(found)
-}
-
-function removeSubMatches(codes) {
-  let sorted = codes.slice().sort((a, b) => b.code.length - a.code.length)
-  let final = []
-  for (let item of sorted) {
-    if (!final.some(big => big.code.includes(item.code) && big.code !== item.code))
-      final.push(item)
-  }
-  return final
-}
-
-function uniqueEvents(events) {
-  let map = {}
-  for (let ev of events) {
-    let key = `${ev.source}|${ev.code}`
-    if (!map[key]) map[key] = ev
-  }
-  return Object.values(map)
+  return found
 }
 
 function extractEvents(raw, path) {
   let text = cleanRaw(raw)
-  let source = getSource(path, text)
-  let ops = findOperations(text)
+  let source = getSource(path)
   let codes = extractCodes(text)
   let events = []
 
-  for (let c of codes) {
-    let op = nearestOperation(ops, c.index)
+  codes.forEach(c => {
     events.push({
       source,
-      action: op ? op.type : "Detectado",
+      action: "Detectado",
       code: c.code,
       codeType: c.codeType,
-      date: op ? dateNear(text, c.index) : "Sem data",
+      date: "Detectado no arquivo",
       file: path,
       proxyOwner: detectProxyOwner(c.code)
     })
-  }
-  return uniqueEvents(events)
+  })
+
+  return events
 }
 
-// ====================== HTML (igual ao original) ======================
 function generateHtml(data) {
-  // ... (código do HTML igual ao que você enviou originalmente)
-  let installed = data.events.filter(e => e.action === "Instalação")
-  let removed = data.events.filter(e => e.action === "Remoção")
-  let detected = data.events.filter(e => e.action === "Detectado")
-  let proxyDetected = data.events.filter(e => e.proxyOwner)
-  let mcSettingsEvents = data.events.filter(e => e.source === "MCSettingsEvents")
-  let mcProfileEvents = data.events.filter(e => e.source === "MCProfileEvents")
-
-  function card(ev) {
-    let cls = ev.action === "Remoção" ? "remove" : ev.action === "Instalação" ? "install" : "event"
-    return `
-      <div class="card">
-        <div class="card-main">
-          <span class="tag ${cls}">${ev.action}</span>
-          <span class="source">${ev.source}</span>
-          <span class="type">${ev.codeType}</span>
-          <div class="code">${ev.code}</div>
-          ${ev.proxyOwner ? `<div class="proxy-alert">⚠ Proxy ${ev.proxyOwner} detectado</div>` : ""}
-          <div class="file">${ev.file.split("/").pop()}</div>
-        </div>
-        <div class="date">${ev.date}</div>
-      </div>
-    `
-  }
-
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>${APP_NAME}</title>
-<style>
-body { background:#050505; color:#eee; font-family: Menlo, monospace; padding:22px; }
-.header { text-align:center; margin-top:28px; margin-bottom:52px; padding:30px 0 20px 0; }
-.main-name { color:#fff; font-size:108px; font-weight:900; letter-spacing:18px; text-shadow:0 0 18px #fff, 0 0 42px #fff, 0 0 80px #777; line-height:1; }
-.credits { margin-top:26px; color:#bbb; font-size:34px; letter-spacing:5px; line-height:2; text-shadow:0 0 10px #555; }
-.discord { color:#fff; font-size:36px; font-weight:800; text-shadow:0 0 12px #fff, 0 0 24px #777; }
-.section { border:1px solid #222; padding:18px; margin:22px 0; background:#080808; }
-.title { color:#888; letter-spacing:5px; margin-bottom:18px; }
-.row { display:flex; justify-content:space-between; border-bottom:1px solid #111; padding:12px 0; }
-.label { color:#888; }
-.value { color:#fff; }
-.card { border:1px solid #181818; padding:14px; margin:12px 0; background:#0b0b0b; display:flex; justify-content:space-between; gap:16px; }
-.card-main { flex:1; min-width:0; }
-.tag { padding:5px 10px; border-radius:4px; font-size:12px; }
-.install { background:#063b1e; color:#6bff9e; }
-.remove { background:#410610; color:#ff5c72; }
-.event { background:#302406; color:#ffd56b; }
-.source { color:#ffd56b; margin-left:8px; font-size:12px; }
-.type { color:#777; margin-left:8px; font-size:12px; }
-.code { margin-top:12px; color:#fff; font-size:16px; word-break:break-all; }
-.file { margin-top:8px; color:#555; font-size:12px; }
-.date { color:#aaa; white-space:nowrap; font-size:13px; text-align:right; }
-.proxy-alert { margin-top:10px; color:#ff4f68; font-weight:700; text-shadow:0 0 8px #600; }
-</style>
-</head>
+  // HTML simplificado para teste rápido
+  let html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>${APP_NAME}</title>
+<style>body{background:#000;color:#0f0;font-family:Menlo;padding:20px;}</style></head>
 <body>
-<div class="header">
-  <div class="main-name">${APP_NAME}</div>
-  <div class="credits">CRÉDITOS: ${CREDIT}<br><span class="discord">${DISCORD}</span></div>
-</div>
-<!-- resto do HTML igual ao original -->
-<div class="section">
-  <div class="title">◆ ARQUIVOS ANALISADOS</div>
-  <div class="row"><span class="label">Arquivos selecionados</span><span class="value">${data.filesRead}</span></div>
-  <div class="row"><span class="label">Eventos únicos</span><span class="value">${data.events.length}</span></div>
-</div>
-
-<div class="section"><div class="title">◆ AVISOS DE PROXY (${proxyDetected.length})</div>${proxyDetected.length ? proxyDetected.map(card).join("") : "<p>Nenhum proxy conhecido detectado.</p>"}</div>
-<div class="section"><div class="title">◆ PERFIS INSTALADOS (${installed.length})</div>${installed.length ? installed.map(card).join("") : "<p>Nenhuma instalação encontrada.</p>"}</div>
-<div class="section"><div class="title">◆ PERFIS REMOVIDOS (${removed.length})</div>${removed.length ? removed.map(card).join("") : "<p>Nenhuma remoção encontrada.</p>"}</div>
-<div class="section"><div class="title">◆ TODOS OS EVENTOS (${data.events.length})</div>${data.events.map(card).join("")}</div>
+<h1>${APP_NAME} - DETECÇÃO</h1>
+<p>Arquivos lidos: ${data.filesRead} | Eventos: ${data.events.length}</p>
+${data.events.map(ev => `
+  <div style="background:#111;padding:10px;margin:8px 0;border-left:4px solid #0f0;">
+    <b>${ev.action}</b> - ${ev.codeType}<br>
+    <small>${ev.code}</small><br>
+    ${ev.proxyOwner ? `<b style="color:red">PROXY: ${ev.proxyOwner}</b>` : ''}
+  </div>`).join('')}
 </body></html>`
+
+  return html
 }
 
 async function main() {
@@ -291,28 +168,18 @@ async function main() {
 
   for (let file of files) {
     let raw = readAny(fm, file)
-    if (!raw) continue
-    filesRead++
-    allEvents.push(...extractEvents(raw, file))
+    if (raw.length > 100) {
+      filesRead++
+      allEvents = allEvents.concat(extractEvents(raw, file))
+    }
   }
 
-  let cleanEvents = uniqueEvents(allEvents)
-
-  cleanEvents.sort((a, b) => {
-    if (a.proxyOwner && !b.proxyOwner) return -1
-    if (!a.proxyOwner && b.proxyOwner) return 1
-    if (a.action === "Instalação" && b.action !== "Instalação") return -1
-    if (a.action === "Remoção" && b.action !== "Remoção") return 1
-    return a.code.localeCompare(b.code)
-  })
-
-  let html = generateHtml({ events: cleanEvents, filesRead })
-
+  let html = generateHtml({events: allEvents, filesRead})
   let outFM = FileManager.iCloud()
-  let path = outFM.joinPath(outFM.documentsDirectory(), `hooking_result_${Date.now()}.html`)
+  let path = outFM.joinPath(outFM.documentsDirectory(), `hooking_${Date.now()}.html`)
   outFM.writeString(path, html)
 
-  await alertMsg("Hooking finalizado", `Arquivos: ${filesRead}\nEventos: ${cleanEvents.length}`)
+  await alertMsg("Finalizado", `Eventos encontrados: ${allEvents.length}`)
   QuickLook.present(path)
 }
 
