@@ -50,7 +50,7 @@ function readAny(fm, path) {
 
 function cleanRaw(raw) {
   return String(raw || "")
-    .replace(/\u0000/g, " ")
+    .replace(/\0/g, " ")
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ")
     .replace(/[^\x20-\x7EÀ-ÿ]/g, " ")
     .replace(/\s+/g, " ")
@@ -63,61 +63,58 @@ function getSource(path, text) {
   if (p.includes("setting") || t.includes("systemsettings") || t.includes("systemprofilerestrictions")) {
     return "MCSettingsEvents"
   }
-
   if (p.includes("profile") || t.includes("profileevents")) {
     return "MCProfileEvents"
   }
-
   return "Arquivo MC"
 }
 
+// ====================== FUNÇÕES MELHORADAS ======================
+
 function cleanCode(code) {
   return String(code || "")
+    .trim()
     .replace(/^[^a-zA-Z0-9]+/, "")
-    .replace(/[^a-zA-Z0-9._~\-]+$/, "")
+    .replace(/[^a-zA-Z0-9._~\-:@]+$/g, "")
     .trim()
 }
 
 function isJunk(code) {
+  if (!code || code.length < 8) return true
   let lower = code.toLowerCase()
 
-  let junk = [
-    "profileevents", "systemsettings", "systemclientrestrictions",
-    "systemprofilerestrictions", "effectivesettings", "restrictions",
-    "timestamp", "operation", "process", "clientrestrictions",
-    "clienttype", "restrictedbool", "intersection", "union",
-    "values", "event", "install", "remove", "removed", "installed",
-    "apple.com", "plist", "bplist", "managedconfiguration",
-    "managedsettingsextension", "mcrestrictionmanagerwriter",
-    "recomputeeffectiveusersettings", "applyrestrictiondictionary",
-    "localizedclientdescription", "allow", "force"
+  const junkKeywords = [
+    "profileevents", "systemsettings", "systemclientrestrictions", "systemprofilerestrictions",
+    "effectivesettings", "restrictions", "timestamp", "operation", "process", "clientrestrictions",
+    "clienttype", "restrictedbool", "intersection", "union", "values", "event", "install", 
+    "remove", "removed", "installed", "apple.com", "plist", "bplist", "managedconfiguration",
+    "mcrestrictionmanagerwriter", "recomputeeffectiveusersettings", "applyrestrictiondictionary",
+    "localizedclientdescription", "payload", "payloadtype", "payloadidentifier", "payloaduuid",
+    "allow", "force", "bool", "integer", "string", "data", "date", "array", "dict"
   ]
 
-  if (junk.some(j => lower.includes(j))) return true
-  if (code.length < 12) return true
+  if (junkKeywords.some(j => lower.includes(j))) return true
+  if (/^com\.apple\./i.test(code)) return true
+  if (lower.length < 12 && !/^[a-f0-9]{8,}$/i.test(code)) return true
 
   return false
 }
 
 function looksLikeCode(code) {
+  if (isJunk(code)) return false
   let lower = code.toLowerCase()
 
-  if (isJunk(code)) return false
-
   if (/^[a-f0-9]{32,128}$/i.test(code)) return true
-  if (/^[a-f0-9]{32,128}-[a-f0-9-]{20,80}$/i.test(code)) return true
-  if (/^(com|xyz|net|org|applejr)\.[a-zA-Z0-9._~\-]{4,260}$/i.test(code)) return true
-
-  if (lower.includes("dns")) return true
-  if (lower.includes("vpn")) return true
+  if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(code)) return true
+  if (/^[a-f0-9]{32,}-[a-f0-9-]{20,}$/i.test(code)) return true
+  if (/^(com|net|org|xyz|io|me|tv|app)\.[a-z0-9][a-z0-9._-]{4,}$/i.test(code)) return true
   if (lower.includes("proxy")) return true
+  if (lower.includes("vpn")) return true
+  if (lower.includes("dns")) return true
   if (lower.includes("warp")) return true
-  if (lower.includes("profile")) return true
-  if (lower.includes("adguard")) return true
   if (lower.includes("cloudflare")) return true
-  if (lower.includes("fatality")) return true
-  if (lower.includes("khoindvn")) return true
-  if (lower.includes("khoivdon")) return true
+  if (lower.includes("adguard")) return true
+  if (/^[0-9a-f]{40,}$/i.test(code)) return true
 
   return false
 }
@@ -125,26 +122,38 @@ function looksLikeCode(code) {
 function classifyCode(code) {
   let lower = code.toLowerCase()
 
-  if (/^[a-f0-9]{32,128}-[a-f0-9-]{20,80}$/i.test(code)) return "Hash + UUID"
   if (/^[a-f0-9]{32,128}$/i.test(code)) return "Hash"
-  if (/^(com|xyz|net|org|applejr)\./i.test(code)) return "Perfil"
-  if (lower.includes("dns")) return "DNS"
-  if (lower.includes("vpn")) return "VPN"
+  if (/^[a-f0-9]{8}-[a-f0-9-]{20,}$/i.test(code)) return "UUID"
+  if (/^(com|net|org|xyz|io|me|tv|app)\./i.test(code)) return "Perfil"
   if (lower.includes("proxy")) return "Proxy"
-  if (lower.includes("warp")) return "Warp"
+  if (lower.includes("vpn")) return "VPN"
+  if (lower.includes("dns")) return "DNS"
+  if (lower.includes("warp")) return "Cloudflare Warp"
 
   return "Código"
 }
 
+function extractProfileName(text, index) {
+  const block = text.slice(Math.max(0, index - 800), Math.min(text.length, index + 800))
+  const nameRegex = /(?:PayloadDisplayName|Name|Label|Title|description)[\s\S]{0,100}?([^\x00-\x1F\x7F]{4,65})/gi
+  let match
+  
+  while ((match = nameRegex.exec(block)) !== null) {
+    const name = match[1].trim()
+    if (name.length > 4 && !/^\d+$/.test(name) && !name.includes("com.apple") && !name.includes("apple.com")) {
+      return name
+    }
+  }
+  return null
+}
+
 function detectProxyOwner(code) {
   let lower = String(code || "").toLowerCase()
-
   for (let rule of PROXY_RULES) {
     for (let prefix of rule.prefixes) {
       if (lower.startsWith(prefix.toLowerCase())) return rule.name
     }
   }
-
   return null
 }
 
@@ -155,35 +164,29 @@ function findOperations(text) {
 
   while ((m = regex.exec(text)) !== null) {
     let raw = m[1].toLowerCase()
-
     ops.push({
       type: raw.includes("install") ? "Instalação" : "Remoção",
       index: m.index
     })
   }
-
   return ops
 }
 
 function nearestOperation(ops, index) {
   let best = null
   let dist = Infinity
-
   for (let op of ops) {
     let d = Math.abs(op.index - index)
-
     if (d < dist) {
       dist = d
       best = op
     }
   }
-
   return best
 }
 
 function dateNear(text, index) {
   let block = text.slice(Math.max(0, index - 10000), Math.min(text.length, index + 10000))
-
   let patterns = [
     /\d{2}\/\d{2}\/\d{4}[, ]+\d{2}:\d{2}:\d{2}/,
     /\d{2}-\d{2}-\d{4}[, ]+\d{2}:\d{2}:\d{2}/,
@@ -195,23 +198,21 @@ function dateNear(text, index) {
     let m = block.match(p)
     if (m) return m[0]
   }
-
   return "Data/hora interna do bplist"
 }
 
 function extractCodes(text) {
   let found = []
 
-  let regexes = [
-    /([a-f0-9]{32,128}-[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/gi,
-    /((?:com|xyz|net|org|applejr)\.[a-zA-Z0-9._~\-]{4,260})/g,
+  const regexes = [
+    /([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/gi,
     /([a-f0-9]{32,128})/gi,
-    /([a-zA-Z0-9._~\-]{12,260})/g
+    /((?:com|net|org|xyz|io|me|tv|app)\.[a-zA-Z0-9._-]{8,180})/gi,
+    /([a-zA-Z0-9][a-zA-Z0-9._-]{11,140})/g
   ]
 
   for (let regex of regexes) {
     let m
-
     while ((m = regex.exec(text)) !== null) {
       let code = cleanCode(m[1])
       if (!looksLikeCode(code)) continue
@@ -219,7 +220,8 @@ function extractCodes(text) {
       found.push({
         code,
         index: m.index,
-        codeType: classifyCode(code)
+        codeType: classifyCode(code),
+        displayName: extractProfileName(text, m.index)
       })
     }
   }
@@ -235,18 +237,15 @@ function removeSubMatches(codes) {
     let inside = final.some(big => big.code !== item.code && big.code.includes(item.code))
     if (!inside) final.push(item)
   }
-
   return final
 }
 
 function uniqueEvents(events) {
   let map = {}
-
   for (let ev of events) {
     let key = `${ev.source}|${ev.action}|${ev.code}`
     if (!map[key]) map[key] = ev
   }
-
   return Object.values(map)
 }
 
@@ -265,6 +264,7 @@ function extractEvents(raw, path) {
       action: op ? op.type : "Detectado",
       code: c.code,
       codeType: c.codeType,
+      displayName: c.displayName,
       date: op ? dateNear(text, c.index) : "Sem install/remove próximo",
       file: path,
       proxyOwner: detectProxyOwner(c.code)
@@ -273,6 +273,8 @@ function extractEvents(raw, path) {
 
   return uniqueEvents(events)
 }
+
+// ====================== GERAÇÃO DO HTML ======================
 
 function generateHtml(data) {
   let installed = data.events.filter(e => e.action === "Instalação")
@@ -284,6 +286,7 @@ function generateHtml(data) {
 
   function card(ev) {
     let cls = ev.action === "Remoção" ? "remove" : ev.action === "Instalação" ? "install" : "event"
+    let nameHTML = ev.displayName ? `<div class="name">📛 ${ev.displayName}</div>` : ""
 
     return `
       <div class="card">
@@ -291,6 +294,7 @@ function generateHtml(data) {
           <span class="tag ${cls}">${ev.action}</span>
           <span class="source">${ev.source}</span>
           <span class="type">${ev.codeType}</span>
+          ${nameHTML}
           <div class="code">${ev.code}</div>
           ${ev.proxyOwner ? `<div class="proxy-alert">⚠ Proxy ${ev.proxyOwner} detectado</div>` : ""}
           <div class="file">${ev.file.split("/").pop()}</div>
@@ -325,10 +329,11 @@ body { background:#050505; color:#eee; font-family: Menlo, monospace; padding:22
 .event { background:#302406; color:#ffd56b; }
 .source { color:#ffd56b; margin-left:8px; font-size:12px; }
 .type { color:#777; margin-left:8px; font-size:12px; }
+.name { margin-top:8px; color:#6bff9e; font-size:15px; }
 .code { margin-top:12px; color:#fff; font-size:16px; word-break:break-all; }
 .file { margin-top:8px; color:#555; font-size:12px; }
 .date { color:#aaa; white-space:nowrap; font-size:13px; text-align:right; }
-.proxy-alert { margin-top:10px; color:#ff4f68; font-size:14px; font-weight:700; text-shadow:0 0 8px #600; }
+.proxy-alert { margin-top:10px; color:#ff4f68; font-weight:700; text-shadow:0 0 8px #600; }
 </style>
 </head>
 <body>
